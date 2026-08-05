@@ -1,0 +1,200 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1280 944" width="1280" height="944" font-family="IBM Plex Sans, -apple-system, Segoe UI, Roboto, sans-serif">
+  <title>eko Voice Agent — system architecture</title>
+  <desc>A voice note travels from WhatsApp through Meta to our backend, is transcribed, passes a PIN gate, and either reaches the LLM agent or executes a payment directly. The PIN gate sits in front of the model, so a PIN never reaches it.</desc>
+
+  <defs>
+    <marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M0,0 L10,5 L0,10 z" fill="#7a6f64"/>
+    </marker>
+    <marker id="arrow-brand" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M0,0 L10,5 L0,10 z" fill="#e5670f"/>
+    </marker>
+    <marker id="arrow-good" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M0,0 L10,5 L0,10 z" fill="#127a38"/>
+    </marker>
+    <style>
+      .box   { fill:#ffffff; stroke:#ddd4c6; stroke-width:1.5; rx:8; }
+      .t     { font-size:13px; fill:#1a1613; font-weight:600; }
+      .s     { font-size:11px; fill:#7a6f64; }
+      .mono  { font-family:"IBM Plex Mono", ui-monospace, Menlo, monospace; font-size:10.5px; fill:#7a6f64; }
+      .lbl   { font-size:11px; fill:#4b443d; }
+      .flow  { stroke:#7a6f64; stroke-width:1.6; fill:none; marker-end:url(#arrow); }
+      .flow-brand { stroke:#e5670f; stroke-width:2.4; fill:none; marker-end:url(#arrow-brand); }
+      .flow-good  { stroke:#127a38; stroke-width:2; fill:none; marker-end:url(#arrow-good); }
+      .dash  { stroke:#b8ada0; stroke-width:1.2; fill:none; stroke-dasharray:4 4; marker-end:url(#arrow); }
+      .zone  { fill:none; stroke:#e9e2d9; stroke-width:1.5; rx:14; stroke-dasharray:6 5; }
+      .zonelbl { font-size:10.5px; fill:#7a6f64; font-weight:600; letter-spacing:0.09em; }
+    </style>
+  </defs>
+
+  <rect width="1280" height="944" fill="#fbf8f5"/>
+
+  <!-- ── title ─────────────────────────────────────────────────────── -->
+  <rect x="40" y="30" width="4" height="26" rx="2" fill="#e5670f"/>
+  <text x="58" y="45" font-size="21" font-weight="700" fill="#1a1613">eko Voice Agent</text>
+  <text x="58" y="65" class="s">Speak an instruction · confirm with a spoken PIN · keep the receipt</text>
+  <text x="1240" y="45" text-anchor="end" class="mono">v1 · POC</text>
+  <text x="1240" y="62" text-anchor="end" class="mono">751 tests · stub gateway</text>
+
+  <!-- ── outside world ─────────────────────────────────────────────── -->
+  <rect class="zone" x="40" y="88" width="1200" height="96"/>
+  <text x="56" y="107" class="zonelbl">OUTSIDE — WE BUILD NONE OF THIS</text>
+
+  <rect class="box" x="72" y="116" width="190" height="52"/>
+  <text x="167" y="138" text-anchor="middle" class="t">👤 User</text>
+  <text x="167" y="155" text-anchor="middle" class="s">WhatsApp app · no install</text>
+
+  <rect class="box" x="308" y="116" width="200" height="52"/>
+  <text x="408" y="138" text-anchor="middle" class="t">Meta Cloud API</text>
+  <text x="408" y="155" text-anchor="middle" class="s">webhooks + outbound</text>
+
+  <rect class="box" x="900" y="116" width="180" height="52" style="fill:#e2f2e7;stroke:#bfe0cb"/>
+  <text x="990" y="138" text-anchor="middle" class="t">Sarvam</text>
+  <text x="990" y="155" text-anchor="middle" class="s">22 Indian languages</text>
+
+  <rect class="box" x="1096" y="116" width="128" height="52" style="fill:#e4eafa;stroke:#c7d3f2"/>
+  <text x="1160" y="138" text-anchor="middle" class="t">LLM</text>
+  <text x="1160" y="155" text-anchor="middle" class="s">Claude / Nemotron</text>
+
+  <path class="flow" d="M262,134 L302,134"/>
+  <path class="flow" d="M302,152 L266,152"/>
+  <text x="282" y="128" text-anchor="middle" class="mono">🎤</text>
+  <text x="282" y="170" text-anchor="middle" class="mono">💬</text>
+
+  <!-- ── our backend ───────────────────────────────────────────────── -->
+  <rect class="zone" x="40" y="200" width="1200" height="480" style="stroke:#e5670f;stroke-dasharray:none;stroke-width:1.5"/>
+  <text x="56" y="221" class="zonelbl" style="fill:#e5670f">OUR BACKEND — src/whatsapp_voice/</text>
+
+  <!-- transport -->
+  <rect class="box" x="72" y="240" width="204" height="72"/>
+  <text x="174" y="262" text-anchor="middle" class="t">app.py — webhook</text>
+  <text x="174" y="279" text-anchor="middle" class="s">verify signature · dedupe</text>
+  <text x="174" y="295" text-anchor="middle" class="s" style="fill:#c0392b;font-weight:600">200 OK immediately</text>
+
+  <!-- guard -->
+  <rect class="box" x="316" y="240" width="188" height="72" style="fill:#e4eafa;stroke:#c7d3f2"/>
+  <text x="410" y="262" text-anchor="middle" class="t">GuardedHandler</text>
+  <text x="410" y="279" text-anchor="middle" class="s">allowlist · role · rate limit</text>
+  <text x="410" y="295" text-anchor="middle" class="mono" style="fill:#2452c0">+pay to send money</text>
+
+  <!-- group -->
+  <rect class="box" x="544" y="240" width="180" height="72" style="fill:#faf1dd;stroke:#ecdcae"/>
+  <text x="634" y="262" text-anchor="middle" class="t">GroupHandler</text>
+  <text x="634" y="279" text-anchor="middle" class="s">dormant until “@eko”</text>
+  <text x="634" y="295" text-anchor="middle" class="s">no payments in groups</text>
+
+  <!-- handler -->
+  <rect class="box" x="764" y="240" width="180" height="72"/>
+  <text x="854" y="262" text-anchor="middle" class="t">MessageHandler</text>
+  <text x="854" y="279" text-anchor="middle" class="mono">echo · transcribe</text>
+  <text x="854" y="295" text-anchor="middle" class="mono">agent · payment</text>
+
+  <path class="flow" d="M276,276 L311,276"/>
+  <path class="flow" d="M504,276 L539,276"/>
+  <path class="flow" d="M724,276 L759,276"/>
+
+  <!-- pipeline row -->
+  <rect class="box" x="72" y="368" width="168" height="64"/>
+  <text x="156" y="392" text-anchor="middle" class="t">audio.py</text>
+  <text x="156" y="410" text-anchor="middle" class="s">opus → 16 kHz wav</text>
+
+  <rect class="box" x="280" y="368" width="168" height="64"/>
+  <text x="364" y="392" text-anchor="middle" class="t">stt/</text>
+  <text x="364" y="410" text-anchor="middle" class="s">text + language</text>
+
+  <path class="flow" d="M800,318 L800,336 L160,336 L160,363"/>
+  <path class="flow" d="M240,400 L275,400"/>
+  <path class="flow" d="M448,410 L523,410"/>
+  <path class="flow" d="M962,172 L962,196 L1214,196 L1214,344 L462,344 L462,363" style="stroke-dasharray:4 4;stroke:#127a38;marker-end:url(#arrow-good)"/>
+
+  <!-- THE GATE -->
+  <rect x="528" y="352" width="228" height="98" rx="10" fill="#fce9d9" stroke="#e5670f" stroke-width="2.5"/>
+  <text x="642" y="376" text-anchor="middle" font-size="14" font-weight="700" fill="#c1520a">🔒 PaymentFlow</text>
+  <text x="642" y="394" text-anchor="middle" class="s" style="fill:#c1520a">the gate — in FRONT of the model</text>
+  <text x="642" y="415" text-anchor="middle" font-size="12" font-weight="600" fill="#1a1613">“is this a PIN?”</text>
+  <text x="642" y="435" text-anchor="middle" class="mono" style="fill:#c1520a">never logged · never echoed</text>
+
+  <!-- branch: not a PIN -> agent -->
+  <path class="flow" d="M756,382 L806,382"/>
+  <text x="781" y="374" text-anchor="middle" class="lbl">no</text>
+
+  <rect class="box" x="812" y="352" width="180" height="98" style="fill:#e4eafa;stroke:#c7d3f2"/>
+  <text x="902" y="376" text-anchor="middle" class="t">agent/</text>
+  <text x="902" y="394" text-anchor="middle" class="s">picks a tool</text>
+  <text x="902" y="414" text-anchor="middle" class="mono">resolve_payee</text>
+  <text x="902" y="430" text-anchor="middle" class="mono">prepare_transfer</text>
+  <text x="902" y="444" text-anchor="middle" class="mono" style="fill:#c0392b">no execute tool</text>
+
+  <path class="flow" d="M992,382 L1040,382 L1040,362" style="stroke-dasharray:4 4"/>
+  <path class="flow" d="M1096,142 L1052,142 L1052,352" style="stroke-dasharray:4 4;marker-end:none"/>
+
+  <!-- branch: IS a PIN -> straight to the gateway -->
+  <path class="flow-brand" d="M642,450 L642,516"/>
+  <text x="662" y="484" class="lbl" style="fill:#c1520a;font-weight:600">YES — stops here</text>
+  <text x="662" y="500" class="mono" style="fill:#c1520a">0 tokens · model never called</text>
+
+  <!-- boundaries row -->
+  <rect class="box" x="812" y="520" width="180" height="86" style="fill:#f4f0eb"/>
+  <text x="902" y="543" text-anchor="middle" class="t">CampaignDataSource</text>
+  <text x="902" y="561" text-anchor="middle" class="s">read-only by design</text>
+  <text x="902" y="581" text-anchor="middle" class="mono" style="fill:#8a6410">StubCampaignSource</text>
+  <text x="902" y="597" text-anchor="middle" class="mono" style="fill:#8a6410">fake numbers today</text>
+
+  <rect x="528" y="520" width="228" height="86" rx="8" fill="#ffffff" stroke="#e5670f" stroke-width="2"/>
+  <text x="642" y="543" text-anchor="middle" class="t">PaymentGateway</text>
+  <text x="642" y="561" text-anchor="middle" class="s">confirm_and_execute(pin)</text>
+  <text x="642" y="581" text-anchor="middle" class="mono" style="fill:#8a6410">StubPaymentGateway</text>
+  <text x="642" y="597" text-anchor="middle" class="mono" style="fill:#8a6410">moves no money today</text>
+
+  <path class="flow" d="M902,452 L902,515"/>
+
+  <!-- foundation -->
+  <rect class="box" x="72" y="520" width="168" height="86" style="fill:#e2f2e7;stroke:#bfe0cb"/>
+  <text x="156" y="543" text-anchor="middle" class="t">audit.py</text>
+  <text x="156" y="561" text-anchor="middle" class="s">append-only</text>
+  <text x="156" y="579" text-anchor="middle" class="s">before AND after</text>
+  <text x="156" y="597" text-anchor="middle" class="mono">never a PIN</text>
+
+  <rect class="box" x="280" y="520" width="168" height="86"/>
+  <text x="364" y="543" text-anchor="middle" class="t">store.py</text>
+  <text x="364" y="561" text-anchor="middle" class="s">memory | Redis</text>
+  <text x="364" y="579" text-anchor="middle" class="s">dedupe · intents</text>
+  <text x="364" y="597" text-anchor="middle" class="s">rate limits</text>
+
+  <path class="dash" d="M528,563 L452,563"/>
+  <path class="dash" d="M276,563 L244,563"/>
+
+  <!-- reply back out -->
+  <path class="flow-good" d="M528,410 L486,410 L486,646 L64,646 L64,300 L67,300"/>
+  <text x="286" y="638" class="lbl" style="fill:#127a38">reply, in the language they spoke →  client.py  →  Meta  →  💬</text>
+
+  <!-- ── eko ───────────────────────────────────────────────────────── -->
+  <rect class="zone" x="40" y="696" width="1200" height="96"/>
+  <text x="56" y="715" class="zonelbl">eko — BLOCKED ON CREDENTIALS</text>
+
+  <rect class="box" x="528" y="724" width="228" height="52" style="fill:#fbe7e3;stroke:#eebcb4"/>
+  <text x="642" y="745" text-anchor="middle" class="t">eko ICICI transfer API</text>
+  <text x="642" y="763" text-anchor="middle" class="mono" style="fill:#c0392b">pintwin = the spoken PIN</text>
+
+  <rect class="box" x="812" y="724" width="180" height="52" style="fill:#fbe7e3;stroke:#eebcb4"/>
+  <text x="902" y="745" text-anchor="middle" class="t">eko reporting API</text>
+  <text x="902" y="763" text-anchor="middle" class="mono" style="fill:#c0392b">not connected yet</text>
+
+  <path class="flow" d="M642,608 L642,719" style="stroke-dasharray:5 4"/>
+  <path class="flow" d="M902,608 L902,719" style="stroke-dasharray:5 4"/>
+
+  <!-- ── legend ────────────────────────────────────────────────────── -->
+  <rect x="1016" y="856" width="224" height="72" rx="8" fill="#ffffff" stroke="#e9e2d9"/>
+  <text x="1032" y="874" class="zonelbl">LEGEND</text>
+  <line x1="1032" y1="888" x2="1060" y2="888" stroke="#e5670f" stroke-width="2.4"/>
+  <text x="1068" y="892" class="lbl">the PIN path</text>
+  <line x1="1032" y1="906" x2="1060" y2="906" stroke="#127a38" stroke-width="2"/>
+  <text x="1068" y="910" class="lbl">the reply</text>
+  <line x1="1032" y1="922" x2="1060" y2="922" stroke="#b8ada0" stroke-width="1.2" stroke-dasharray="4 4"/>
+  <text x="1068" y="926" class="lbl">supporting / not yet live</text>
+
+  <!-- ── the two claims ────────────────────────────────────────────── -->
+  <text x="40" y="828" font-size="12" font-weight="700" fill="#1a1613">Two properties everything else follows from</text>
+  <text x="40" y="852" font-size="12" fill="#4b443d">1 · <tspan font-weight="600">A PIN never reaches the model.</tspan> The gate runs before the agent, so the PIN turn costs 0 tokens — which is the proof it could not have.</text>
+  <text x="40" y="874" font-size="12" fill="#4b443d">2 · <tspan font-weight="600">No tool can move money.</tspan> The most a model can do is prepare an unauthorised intent, so a prompt injected into a transcript has nothing to reach for.</text>
+</svg>

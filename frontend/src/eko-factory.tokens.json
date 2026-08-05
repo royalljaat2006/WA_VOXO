@@ -1,0 +1,86 @@
+{
+  "$schema": "eko-factory.tokens.v1",
+  "name": "Eko Factory Design Language",
+  "version": "1.0",
+  "owner": "Eko Bharat Ventures",
+  "brand": {
+    "brand": "#e5670f",
+    "brand-strong": "#c1520a",
+    "brand-soft": "#fce9d9",
+    "gold": "#b98811"
+  },
+  "neutrals": {
+    "bg": "#fbf8f5",
+    "surface": "#ffffff",
+    "surface-2": "#f4f0eb",
+    "ink": "#1a1613",
+    "ink-soft": "#4b443d",
+    "ink-mute": "#7a6f64",
+    "line": "#e9e2d9",
+    "line-strong": "#ddd4c6"
+  },
+  "semantic": {
+    "verified": {
+      "fg": "#127a38",
+      "soft": "#e2f2e7",
+      "line": "#bfe0cb"
+    },
+    "running": {
+      "fg": "#2452c0",
+      "soft": "#e4eafa",
+      "line": "#c7d3f2"
+    },
+    "parked": {
+      "fg": "#8a6410",
+      "soft": "#faf1dd",
+      "line": "#ecdcae"
+    },
+    "failed": {
+      "fg": "#c0392b",
+      "soft": "#fbe7e3",
+      "line": "#eebcb4"
+    }
+  },
+  "type": {
+    "sans": "IBM Plex Sans",
+    "mono": "IBM Plex Mono",
+    "scale": {
+      "display": 40,
+      "h1": 32,
+      "h2": 24,
+      "body": 15,
+      "label": 11
+    }
+  },
+  "space": {
+    "unit": 8,
+    "scale": [
+      4,
+      8,
+      12,
+      16,
+      24,
+      32,
+      48
+    ]
+  },
+  "radius": {
+    "chip": 4,
+    "ctrl": 8,
+    "card": 12,
+    "sheet": 16
+  },
+  "elevation": {
+    "e1": "0 1px 2px rgba(26,22,19,.06)",
+    "e2": "0 1px 2px rgba(26,22,19,.05),0 4px 14px rgba(26,22,19,.07)",
+    "e3": "0 10px 34px rgba(26,22,19,.14)"
+  },
+  "dark": {
+    "bg": "#16120f",
+    "surface": "#201a15",
+    "surface-2": "#2a231d",
+    "ink": "#f3ede5",
+    "ink-mute": "#9a8e80",
+    "brand": "#f0752a"
+  }
+}

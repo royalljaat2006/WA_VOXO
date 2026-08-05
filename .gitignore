@@ -1,0 +1,33 @@
+# Secrets
+.env
+
+# Python
+.venv/
+__pycache__/
+*.py[cod]
+*.egg-info/
+build/
+dist/
+.pytest_cache/
+.ruff_cache/
+
+# Voice notes, transcripts and results may contain real customer or business
+# data — never commit them.
+data/audio/*
+!data/audio/.gitkeep
+data/results/
+data/.cache/
+data/ground_truth.json
+
+# macOS
+.DS_Store
+
+# Windows: stray file created when a cmd-style `> nul` / `2> nul` redirect
+# runs under a POSIX shell instead of cmd.exe, which doesn't treat NUL as
+# the null device and creates a literal file named "nul".
+nul
+
+# Demo UI
+frontend/node_modules/
+frontend/dist/
+frontend/.env

@@ -1,0 +1,22 @@
+# Secrets — must never enter an image layer
+.env
+
+# Local environment
+.venv/
+__pycache__/
+*.py[cod]
+*.egg-info/
+.pytest_cache/
+.ruff_cache/
+
+# Customer data: voice notes, transcripts, results
+data/
+
+# Not needed at runtime
+tests/
+docs/
+.git/
+.github/
+*.md
+!README.md
+.DS_Store

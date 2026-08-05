@@ -1,0 +1,59 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "whatsapp-voice"
+version = "0.1.0"
+description = "WhatsApp voice agent — voice note in, answered from internal APIs"
+requires-python = ">=3.11"
+dependencies = [
+    "python-dotenv>=1.0.0",
+    "requests>=2.31.0",
+]
+
+[project.optional-dependencies]
+# Phase 0 — speech-to-text engines. Only faster-whisper is needed offline.
+stt = [
+    "faster-whisper>=1.0.0",
+    "openai>=1.40.0",
+]
+# Phase 2 — the webhook server that receives messages from Meta.
+server = [
+    "fastapi>=0.115.0",
+    "uvicorn[standard]>=0.30.0",
+    "python-multipart>=0.0.9",  # file uploads for the demo API
+]
+# Phase 4 — the LLM agent.
+agent = [
+    "anthropic>=0.40.0",
+]
+dev = [
+    "pytest>=8.0.0",
+    "ruff>=0.6.0",
+    "httpx2",  # transport for FastAPI's TestClient
+]
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+# "." so `tests` imports as a package — shared doubles live in tests/fakes.py
+# and are imported relatively, rather than each test file redefining them.
+pythonpath = ["src", "."]
+
+[tool.ruff]
+line-length = 100
+src = ["src", "tools", "tests"]
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B", "SIM"]
+
+[tool.ruff.lint.flake8-bugbear]
+# FastAPI's dependency injection requires these calls in argument defaults —
+# B008 is a false positive for them, not a smell to work around.
+extend-immutable-calls = [
+    "fastapi.Depends", "fastapi.File", "fastapi.Form",
+    "fastapi.Header", "fastapi.Query",
+]

@@ -1,0 +1,127 @@
+/* Eko Factory Design Language v1.0 — © 2026 Eko Bharat Ventures
+ *
+ * Generated from eko-factory.tokens.json. The kit ships an eko-factory.css of
+ * its own; when that lands, replace this file wholesale rather than editing it,
+ * so the design system stays the single source and this stays a faithful copy.
+ *
+ * Its four stated principles are the same ones this codebase already argues for,
+ * which is why adopting it is a re-skin and not a redesign:
+ *
+ *   Local-first      — the PIN gate runs in our process, not in a model
+ *   Provider-neutral — PaymentGateway and CampaignDataSource are boundaries
+ *   Human-controlled — a model may propose a transfer; only a PIN executes one
+ *   Evidence-backed  — the append-only audit trail, and mission control read
+ *                      from it rather than from a parallel tally
+ */
+
+/* Bundled rather than loaded from a CDN: a demo must not depend on the venue's
+   wifi, and the fonts are the first thing a bad connection drops. */
+@import '@fontsource/ibm-plex-sans/400.css';
+@import '@fontsource/ibm-plex-sans/500.css';
+@import '@fontsource/ibm-plex-sans/600.css';
+@import '@fontsource/ibm-plex-sans/700.css';
+@import '@fontsource/ibm-plex-mono/400.css';
+@import '@fontsource/ibm-plex-mono/500.css';
+
+:root {
+  /* --- brand --- */
+  --ef-brand: #e5670f;
+  --ef-brand-strong: #c1520a;
+  --ef-brand-soft: #fce9d9;
+  --ef-gold: #b98811;
+
+  /* --- neutrals & surfaces --- */
+  --ef-bg: #fbf8f5;
+  --ef-surface: #ffffff;
+  --ef-surface-2: #f4f0eb;
+  --ef-ink: #1a1613;
+  --ef-ink-soft: #4b443d;
+  --ef-ink-mute: #7a6f64;
+  --ef-line: #e9e2d9;
+  --ef-line-strong: #ddd4c6;
+
+  /* --- semantic families ---
+     Four states, each with a foreground, a soft fill and a line. Mission
+     control's event vocabulary maps onto them one for one, which is why the
+     tags there need no colours of their own. */
+  --ef-verified-fg: #127a38;   /* done      */
+  --ef-verified-soft: #e2f2e7;
+  --ef-verified-line: #bfe0cb;
+
+  --ef-running-fg: #2452c0;    /* notice    */
+  --ef-running-soft: #e4eafa;
+  --ef-running-line: #c7d3f2;
+
+  --ef-parked-fg: #8a6410;     /* stale     */
+  --ef-parked-soft: #faf1dd;
+  --ef-parked-line: #ecdcae;
+
+  --ef-failed-fg: #c0392b;     /* rejected  */
+  --ef-failed-soft: #fbe7e3;
+  --ef-failed-line: #eebcb4;
+
+  /* --- type --- */
+  --ef-sans: 'IBM Plex Sans', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+  --ef-mono: 'IBM Plex Mono', ui-monospace, SFMono-Regular, Menlo, monospace;
+  --ef-display: 40px;
+  --ef-h1: 32px;
+  --ef-h2: 24px;
+  --ef-body: 15px;
+  --ef-label: 11px;
+
+  /* --- 8pt spacing --- */
+  --ef-s1: 4px;
+  --ef-s2: 8px;
+  --ef-s3: 12px;
+  --ef-s4: 16px;
+  --ef-s5: 24px;
+  --ef-s6: 32px;
+  --ef-s7: 48px;
+
+  /* --- radius --- */
+  --ef-r-chip: 4px;
+  --ef-r-ctrl: 8px;
+  --ef-r-card: 12px;
+  --ef-r-sheet: 16px;
+
+  /* --- elevation --- */
+  --ef-e1: 0 1px 2px rgba(26, 22, 19, 0.06);
+  --ef-e2: 0 1px 2px rgba(26, 22, 19, 0.05), 0 4px 14px rgba(26, 22, 19, 0.07);
+  --ef-e3: 0 10px 34px rgba(26, 22, 19, 0.14);
+}
+
+/* The kit defines a dark surface set but no dark semantic families, so those
+   carry over unchanged — they are legible on both. */
+@media (prefers-color-scheme: dark) {
+  :root {
+    --ef-bg: #16120f;
+    --ef-surface: #201a15;
+    --ef-surface-2: #2a231d;
+    --ef-ink: #f3ede5;
+    --ef-ink-soft: #cfc4b6;
+    --ef-ink-mute: #9a8e80;
+    --ef-brand: #f0752a;
+    --ef-line: #2f2721;
+    --ef-line-strong: #3d332b;
+
+    /* Soft fills are tinted for light surfaces; on dark they need to be dark
+       themselves or every tag becomes a bright block. */
+    --ef-verified-soft: #102a1a;
+    --ef-verified-fg: #6fd398;
+    --ef-running-soft: #131f3a;
+    --ef-running-fg: #8fadf0;
+    --ef-parked-soft: #2c2411;
+    --ef-parked-fg: #e0bd63;
+    --ef-failed-soft: #331714;
+    --ef-failed-fg: #f0968a;
+  }
+}
+
+/* An explicit override, so the theme can be forced for a screenshot or a
+   projector that renders one of them badly. */
+:root[data-theme='dark'] {
+  color-scheme: dark;
+}
+:root[data-theme='light'] {
+  color-scheme: light;
+}
