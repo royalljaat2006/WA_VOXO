@@ -207,19 +207,29 @@ rather than rounding it, because dropped paise are only noticed at
 reconciliation. And eko wants a bare 10-digit mobile where WhatsApp gives 12
 with the country code.
 
+### Confirmed with eko's platform team
+
+1. **`amount` is rupees**, not paise.
+2. **`client_ref_id` must be unique per transfer** — eko uses it for
+   reconciliation. `intent.intent_id` (stable per transfer, so a retry cannot
+   mint a second one) is sent as-is.
+3. **There is no payee-name lookup.** eko will not return a recipient name, full
+   stop — so the bot always falls back to reading digits aloud. That is not a
+   degraded path to improve later; it is the only path. `EKO_VERIFY_PATH` /
+   `field_payee_name` are not worth wiring up for a name.
+4. **`developer_key`, `secret_key`, `secret_key_timestamp` must always be sent
+   as headers, even with an empty value** — never omitted. `EkoSettings` no
+   longer treats `EKO_DEVELOPER_KEY` / `EKO_AUTH_KEY` / `EKO_STATIC_SECRET_KEY`
+   as required for this reason; `eko_auth_headers` sends `secret_key: ""` when
+   neither an auth key nor a static secret is configured, rather than an HMAC
+   of an empty key masquerading as a real one.
+
 ### Still to confirm with eko before this goes live
 
 1. **The `secret_key` HMAC.** Implemented from the documented scheme, never run
    against a sandbox. `EKO_STATIC_SECRET_KEY` is the escape hatch if eko issues a
    fixed secret instead.
-2. **Is `amount` rupees or paise?** Assumed rupees, from the `"amount": "10"` /
-   `"next_allowed_limit": "25000"` pairing in the sample request.
-3. **Is `client_ref_id` honoured as an idempotency key?** If not, a network
-   timeout mid-transfer is a double-payment risk.
-4. **Is there a payee-name lookup endpoint?** (`EKO_VERIFY_PATH`). Without one the
-   bot has no name to read back and falls back to reading digits aloud, which is
-   the weaker check. This is the single most valuable thing to ask for.
-5. **A daily-limit endpoint** (`EKO_SPENT_TODAY_PATH`). Without it the cumulative
+2. **A daily-limit endpoint** (`EKO_SPENT_TODAY_PATH`). Without it the cumulative
    cap only counts what this bot sent since it started, which is not really a
    daily cap.
 

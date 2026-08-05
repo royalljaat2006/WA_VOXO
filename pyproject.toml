@@ -32,6 +32,7 @@ dev = [
     "pytest>=8.0.0",
     "ruff>=0.6.0",
     "httpx2",  # transport for FastAPI's TestClient
+    "paramiko>=3.4.0",  # tools/redeploy_rack.py
 ]
 
 [tool.setuptools.packages.find]

@@ -529,19 +529,20 @@ class EkoSettings:
         Returned as a list rather than a bool so the error names the gap — a
         deployment failing with "set EKO_USER_CODE" is fixable, one failing with
         "not configured" is a guessing game.
+
+        `EKO_DEVELOPER_KEY`, `EKO_AUTH_KEY` and `EKO_STATIC_SECRET_KEY` are
+        deliberately not required here — eko's platform team confirmed the
+        `developer_key`/`secret_key`/`secret_key_timestamp` headers must always
+        be *present*, but an empty value is fine. See `eko_auth_headers`.
         """
         required = {
             "EKO_BASE_URL": self.base_url,
-            "EKO_DEVELOPER_KEY": self.developer_key,
             "EKO_USER_CODE": self.user_code,
             "EKO_INITIATOR_ID": self.initiator_id,
             # eko rejects a transfer with no location.
             "EKO_LATLONG": self.latlong,
         }
-        missing = [name for name, value in required.items() if not value]
-        if not (self.auth_key or self.static_secret_key):
-            missing.append("EKO_AUTH_KEY (or EKO_STATIC_SECRET_KEY)")
-        return missing
+        return [name for name, value in required.items() if not value]
 
     def missing_report_fields(self) -> list[str]:
         """What the reporting source still needs.

@@ -27,17 +27,28 @@ is built.
 eko takes **rupees**, this codebase carries **paise**. The conversion happens once,
 here, in `_rupees`. It refuses anything that is not a whole number of rupees
 rather than rounding — silently dropping paise off a transfer is the kind of bug
-that is only noticed at reconciliation.
+that is only noticed at reconciliation. **Confirmed with eko's platform team:
+`amount` is rupees, not paise.**
+
+### Confirmed with eko's platform team
+
+- **`amount` is rupees**, not paise (see above).
+- **`client_ref_id` must be unique per transfer** — eko uses it for
+  reconciliation, which is why it is set to `intent.intent_id` (stable per
+  transfer, so a retry cannot mint a second one).
+- **No payee-name lookup.** eko will not return a recipient name, so
+  `resolve_payee` always falls back to `PayeeSource.DICTATED` and the digits
+  get read back aloud — this is not a degraded path, it is the only path.
+  `EKO_VERIFY_PATH` / `field_payee_name` are not worth wiring up for a name.
+- **`developer_key`, `secret_key`, `secret_key_timestamp` must always be
+  present as headers, even with an empty value** — see `eko_auth_headers`.
 
 ### What still needs confirming with eko
 
-Three things are implemented from the documented scheme but have not been run
-against a sandbox. Each is called out at its call site:
-
-1. The `secret_key` HMAC construction.
-2. Whether `amount` is rupees (assumed) or paise.
-3. Whether `client_ref_id` is honoured as an idempotency key. If it is not, a
-   network timeout on a transfer is a double-payment risk.
+1. The `secret_key` HMAC construction itself — implemented from the documented
+   scheme, not yet exercised against a sandbox.
+2. A daily-limit endpoint (`EKO_SPENT_TODAY_PATH`) — without one the cumulative
+   cap only counts what this bot sent since it started.
 """
 
 from __future__ import annotations
@@ -89,13 +100,11 @@ class EkoPaymentGateway(PaymentGateway):
         """Recipient mobile → payee.
 
         eko's transfer request takes `recipient_id_type: mobile_number`, so a
-        mobile is all that is strictly needed. A *name* is what makes a wrong
-        number catchable by a human, though, so when a verification endpoint is
-        configured we ask for one.
-
-        Without `EKO_VERIFY_PATH` the payee comes back unnamed, which makes
-        `needs_digit_readback` true and forces the digits to be read aloud. That
-        is the honest fallback: no name means no name, not a guess.
+        mobile is all that is strictly needed. eko's platform team confirmed
+        there is no payee-name lookup — a name is never returned — so this
+        always comes back as `PayeeSource.DICTATED`, `needs_digit_readback` is
+        always true, and the digits get read back aloud. That is not a
+        degraded fallback; it is the only path there is.
         """
         digits = "".join(c for c in (phone or "") if c.isdigit())
         if len(digits) < 10:
@@ -183,9 +192,9 @@ class EkoPaymentGateway(PaymentGateway):
             "latlong": self._settings.latlong,
             "realsourceip": self._settings.source_ip,
             "next_allowed_limit": self._settings.next_allowed_limit,
-            # Our intent id, so a retry cannot pay twice — assuming eko honours
-            # it as an idempotency key. Confirm this before go-live: without it,
-            # a timeout on this request is a double-payment risk.
+            # Our intent id, so a retry cannot pay twice. Confirmed with eko's
+            # platform team: client_ref_id must be unique per transfer and is
+            # used for reconciliation.
             "client_ref_id": intent.intent_id,
             # The spoken PIN. Nothing else in this module may touch it.
             "pintwin": pin,
@@ -280,6 +289,12 @@ def eko_auth_headers(settings: EkoSettings) -> dict[str, str]:
     exercised against a sandbox. If eko issues a static secret instead, set
     `EKO_STATIC_SECRET_KEY` and this computation is skipped.
 
+    eko's platform team confirmed all three headers must always be *present* on
+    every request, even before credentials are issued — so with neither
+    `auth_key` nor `static_secret_key` set, `secret_key` is sent as an empty
+    string rather than an HMAC of an empty key (which would be a non-empty,
+    meaningless value masquerading as a real secret).
+
     Module-level because the reporting source needs the identical headers. A
     second copy would be a second place to fix when eko's scheme is confirmed.
     """
@@ -287,11 +302,13 @@ def eko_auth_headers(settings: EkoSettings) -> dict[str, str]:
 
     if settings.static_secret_key:
         secret = settings.static_secret_key
-    else:
-        encoded = base64.b64encode((settings.auth_key or "").encode()).decode()
+    elif settings.auth_key:
+        encoded = base64.b64encode(settings.auth_key.encode()).decode()
         secret = base64.b64encode(
             hmac.new(encoded.encode(), timestamp.encode(), hashlib.sha256).digest()
         ).decode()
+    else:
+        secret = ""
 
     return {
         "developer_key": settings.developer_key or "",

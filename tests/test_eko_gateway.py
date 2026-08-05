@@ -84,20 +84,19 @@ class TestConfiguration:
     def test_missing_credentials_name_themselves(self):
         """"Set EKO_USER_CODE" is fixable; "not configured" is a guessing game."""
         missing = EkoSettings(base_url="x").missing_fields()
-        assert "EKO_DEVELOPER_KEY" in missing
         assert "EKO_USER_CODE" in missing
 
     def test_latlong_is_required(self):
         """eko rejects a transfer with no location, and WhatsApp gives us none."""
         assert "EKO_LATLONG" in settings(latlong="").missing_fields()
 
-    def test_either_auth_key_or_static_secret_satisfies_auth(self):
-        assert settings(auth_key=None, static_secret_key="s").is_configured
-        assert settings(auth_key="a", static_secret_key=None).is_configured
-        assert not settings(auth_key=None, static_secret_key=None).is_configured
+    def test_developer_key_and_auth_key_are_not_required(self):
+        """eko's platform team confirmed these headers may be sent empty —
+        they must be present, but do not have to hold a real value yet."""
+        assert settings(developer_key=None, auth_key=None, static_secret_key=None).is_configured
 
     def test_refuses_to_construct_when_unconfigured(self):
-        with pytest.raises(PaymentError, match="EKO_DEVELOPER_KEY"):
+        with pytest.raises(PaymentError, match="EKO_USER_CODE"):
             EkoPaymentGateway(EkoSettings(base_url="x"))
 
     def test_is_not_a_stub(self):
@@ -195,6 +194,19 @@ class TestTransferRequest:
         gw.confirm_and_execute(gw.prepare_transfer(PAYER, payee, 100_000), "5353")
 
         assert session.posts[-1]["headers"]["secret_key"] == "fixed-secret"
+
+    def test_headers_present_but_empty_without_credentials(self, payee):
+        """eko's platform team: these three headers must always be present,
+        even before real credentials are issued — an empty secret_key, not a
+        meaningless HMAC of an empty key."""
+        session = FakeSession()
+        gw = gateway(session, developer_key=None, auth_key=None, static_secret_key=None)
+        gw.confirm_and_execute(gw.prepare_transfer(PAYER, payee, 100_000), "5353")
+        headers = session.posts[-1]["headers"]
+
+        assert headers["developer_key"] == ""
+        assert headers["secret_key"] == ""
+        assert headers["secret_key_timestamp"].isdigit()
 
 
 class TestAmountConversion:
