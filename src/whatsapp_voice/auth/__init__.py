@@ -1,11 +1,12 @@
 """Who may ask, what they may see, and how often."""
 
-from .guard import UNKNOWN_NUMBER_REPLY, AccessGuard
+from .guard import UNKNOWN_NUMBER_REPLY, AccessGuard, build_policy
 from .policy import (
     AccessPolicy,
     AuthResult,
     Caller,
     Decision,
+    FileBackedAccessPolicy,
     Role,
     normalise_number,
 )
@@ -18,7 +19,9 @@ __all__ = [
     "AuthResult",
     "Caller",
     "Decision",
+    "FileBackedAccessPolicy",
     "Role",
     "SlidingWindowRateLimiter",
+    "build_policy",
     "normalise_number",
 ]

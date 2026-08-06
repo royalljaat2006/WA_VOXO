@@ -11,7 +11,7 @@ import logging
 
 from ..config import AuthSettings
 from ..store import MemoryStore
-from .policy import AccessPolicy, AuthResult, Caller, Decision, Role
+from .policy import AccessPolicy, AuthResult, Caller, Decision, FileBackedAccessPolicy, Role
 from .rate_limit import SharedRateLimiter, SlidingWindowRateLimiter
 
 logger = logging.getLogger(__name__)
@@ -22,10 +22,20 @@ logger = logging.getLogger(__name__)
 UNKNOWN_NUMBER_REPLY = "Sorry, I can't help with that."
 
 
+def build_policy(settings: AuthSettings) -> AccessPolicy | FileBackedAccessPolicy:
+    """The one place that decides file-backed vs. inline — `AccessGuard` and
+    `tools/run_server.py`'s startup banner both call this, so neither can drift
+    out of sync with the other on which source of truth wins."""
+    default_role = Role(settings.default_role)
+    if settings.allowed_numbers_file:
+        return FileBackedAccessPolicy(settings.allowed_numbers_file, default_role=default_role)
+    return AccessPolicy.parse(settings.allowed_numbers, default_role=default_role)
+
+
 class AccessGuard:
     def __init__(
         self,
-        policy: AccessPolicy,
+        policy: AccessPolicy | FileBackedAccessPolicy,
         rate_limiter: SlidingWindowRateLimiter | None = None,
         enabled: bool = True,
     ) -> None:
@@ -62,13 +72,7 @@ class AccessGuard:
                 limit=settings.rate_limit, window_s=settings.rate_limit_window_s
             )
         )
-        return cls(
-            policy=AccessPolicy.parse(
-                settings.allowed_numbers, default_role=Role(settings.default_role)
-            ),
-            rate_limiter=limiter,
-            enabled=settings.enabled,
-        )
+        return cls(policy=build_policy(settings), rate_limiter=limiter, enabled=settings.enabled)
 
     def check(self, number: str) -> AuthResult:
         """Decide whether this sender may be answered.

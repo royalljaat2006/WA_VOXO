@@ -4,6 +4,7 @@ from whatsapp_voice.auth import (
     AccessGuard,
     AccessPolicy,
     Decision,
+    FileBackedAccessPolicy,
     Role,
     SlidingWindowRateLimiter,
     normalise_number,
@@ -63,6 +64,72 @@ class TestAccessPolicyParsing:
     def test_custom_default_role(self):
         policy = AccessPolicy.parse("919876543210", default_role=Role.ANALYST)
         assert policy.lookup("919876543210").role is Role.ANALYST
+
+
+class TestFileBackedAccessPolicy:
+    """Lets a team that turns over often add/remove a number without a
+    redeploy — the file is re-read only when it actually changes."""
+
+    def test_reads_the_file(self, tmp_path):
+        path = tmp_path / "allowed.txt"
+        path.write_text("919876543210:admin+pay\n")
+
+        policy = FileBackedAccessPolicy(str(path))
+        caller = policy.lookup("919876543210")
+
+        assert caller.role is Role.ADMIN
+        assert caller.can_pay is True
+
+    def test_blank_lines_and_comments_are_ignored(self, tmp_path):
+        path = tmp_path / "allowed.txt"
+        path.write_text(
+            "# eko team\n"
+            "\n"
+            "919876543210:admin+pay   # Priya, ops lead\n"
+            "919000000001\n"
+        )
+
+        policy = FileBackedAccessPolicy(str(path))
+
+        assert len(policy) == 2
+        assert policy.lookup("919000000001").role is Role.VIEWER  # bare -> default
+
+    def test_missing_file_denies_everyone_rather_than_crashing(self, tmp_path):
+        policy = FileBackedAccessPolicy(str(tmp_path / "does-not-exist.txt"))
+        assert policy.is_empty is True
+        assert policy.lookup("919876543210") is None
+
+    def test_picks_up_a_later_edit(self, tmp_path):
+        path = tmp_path / "allowed.txt"
+        path.write_text("919876543210:admin\n")
+        policy = FileBackedAccessPolicy(str(path))
+        assert policy.lookup("919000000001") is None
+
+        path.write_text("919876543210:admin\n919000000001:viewer\n")
+        assert policy.lookup("919000000001").role is Role.VIEWER
+
+    def test_does_not_reread_when_unchanged(self, tmp_path, monkeypatch):
+        path = tmp_path / "allowed.txt"
+        path.write_text("919876543210:admin\n")
+        policy = FileBackedAccessPolicy(str(path))
+        policy.lookup("919876543210")  # first read
+
+        calls = []
+        monkeypatch.setattr(path.__class__, "read_text",
+                             lambda self: calls.append(1) or "919876543210:admin\n")
+        policy.lookup("919876543210")
+
+        assert calls == []  # mtime unchanged -> read_text must not run again
+
+    def test_keeps_last_known_list_if_file_becomes_unreadable(self, tmp_path):
+        path = tmp_path / "allowed.txt"
+        path.write_text("919876543210:admin\n")
+        policy = FileBackedAccessPolicy(str(path))
+        policy.lookup("919876543210")
+
+        path.unlink()
+
+        assert policy.lookup("919876543210").role is Role.ADMIN
 
 
 class TestRoles:
@@ -234,12 +301,29 @@ class TestAccessGuard:
         assert "919876543210999" not in caplog.text
         assert "…0999" in caplog.text
 
+    def test_allowed_numbers_file_takes_precedence_when_set(self, tmp_path):
+        path = tmp_path / "allowed.txt"
+        path.write_text("919000000001:admin+pay\n")
+        settings = AuthSettings(
+            allowed_numbers="919876543210:admin", allowed_numbers_file=str(path)
+        )
+
+        result = AccessGuard.from_settings(settings).check("919876543210")
+
+        assert result.decision is Decision.UNKNOWN_NUMBER  # inline spec ignored
+        assert AccessGuard.from_settings(settings).check("919000000001").allowed is True
+
 
 class TestAuthSettings:
     def test_defaults_are_closed(self):
         settings = AuthSettings()
         assert settings.enabled is True
         assert settings.allowed_numbers == ""
+        assert settings.allowed_numbers_file == ""
+
+    def test_reads_allowed_numbers_file_from_env(self, monkeypatch):
+        monkeypatch.setenv("WHATSAPP_ALLOWED_NUMBERS_FILE", "/srv/allowed.txt")
+        assert AuthSettings.from_env().allowed_numbers_file == "/srv/allowed.txt"
 
     def test_reads_env(self, monkeypatch):
         monkeypatch.setenv("WHATSAPP_ALLOWED_NUMBERS", "919876543210:analyst")

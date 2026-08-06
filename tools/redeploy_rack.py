@@ -23,9 +23,14 @@ PROJECT_ROOT = Path(__file__).resolve().parent.parent
 REMOTE_DIR = "/home/deepanshu/WA_VOXO"
 PORT = 8003
 
-EXCLUDE_DIRS = {".git", ".venv", ".pytest_cache", ".ruff_cache", "__pycache__", "node_modules", ".claude"}
+EXCLUDE_DIRS = {
+    ".git", ".venv", ".pytest_cache", ".ruff_cache", "__pycache__", "node_modules", ".claude",
+}
 EXCLUDE_FILES = {".env", ".DS_Store"}
-EXCLUDE_PATHS = {PROJECT_ROOT / "data" / "audio"}
+# The whole of data/ is runtime state owned by the server (audit trail, the
+# allowlist file, temp audio) — never code. Syncing it from the local repo's
+# stale copy would silently clobber the live audit trail on every redeploy.
+EXCLUDE_PATHS = {PROJECT_ROOT / "data"}
 
 
 def load_env() -> dict[str, str]:

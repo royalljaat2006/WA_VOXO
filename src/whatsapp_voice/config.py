@@ -73,6 +73,13 @@ class SttSettings:
     #: on Hindi/Hinglish. See docs/phase-0-stt-benchmark.md § Results.
     engine: str | None = None
 
+    #: A second name prefix, tried only if `engine` raises. Deliberately
+    #: independent of the benchmark result above — this is a resilience choice
+    #: (survive the primary engine's key/network failing), not a quality one.
+    #: Whichever of the two actually produced a transcript is what `Transcript
+    #: .engine` reports, not this wrapper.
+    fallback_engine: str | None = None
+
     @classmethod
     def from_env(cls) -> SttSettings:
         return cls(
@@ -88,6 +95,7 @@ class SttSettings:
             elevenlabs_model=os.getenv("ELEVENLABS_MODEL", "scribe_v1"),
             request_timeout_s=int(os.getenv("STT_TIMEOUT_S", "180")),
             engine=_optional("STT_ENGINE"),
+            fallback_engine=_optional("STT_ENGINE_FALLBACK"),
         )
 
 
@@ -233,6 +241,11 @@ class AuthSettings:
     enabled: bool = True
     #: "number:role,number:role". A bare number gets `default_role`.
     allowed_numbers: str = ""
+    #: Path to a file in the same "number:role" syntax, one entry per line
+    #: (comments after '#' allowed). When set, this is authoritative and
+    #: `allowed_numbers` above is ignored — see `FileBackedAccessPolicy`. Lets
+    #: a team that turns over often add/remove a number without a redeploy.
+    allowed_numbers_file: str = ""
     default_role: str = "viewer"
     #: Messages per caller per window.
     rate_limit: int = 20
@@ -243,6 +256,7 @@ class AuthSettings:
         return cls(
             enabled=_flag("AUTH_ENABLED", True),
             allowed_numbers=os.getenv("WHATSAPP_ALLOWED_NUMBERS", ""),
+            allowed_numbers_file=os.getenv("WHATSAPP_ALLOWED_NUMBERS_FILE", ""),
             default_role=os.getenv("AUTH_DEFAULT_ROLE", "viewer").strip().lower(),
             rate_limit=int(os.getenv("AUTH_RATE_LIMIT", "20")),
             rate_limit_window_s=float(os.getenv("AUTH_RATE_LIMIT_WINDOW_S", "3600")),

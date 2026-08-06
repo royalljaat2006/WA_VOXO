@@ -19,6 +19,9 @@ data/results/
 data/.cache/
 data/ground_truth.json
 
+# Real employee phone numbers (WHATSAPP_ALLOWED_NUMBERS_FILE) — PII, never commit.
+data/allowed_numbers.txt
+
 # macOS
 .DS_Store
 

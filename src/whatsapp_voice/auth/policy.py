@@ -25,6 +25,7 @@ import re
 from contextvars import ContextVar
 from dataclasses import dataclass
 from enum import Enum
+from pathlib import Path
 
 logger = logging.getLogger(__name__)
 
@@ -183,3 +184,67 @@ class AccessPolicy:
 
     def __len__(self) -> int:
         return len(self._entries)
+
+
+class FileBackedAccessPolicy:
+    """An allowlist that reloads from a file when it changes.
+
+    For a team that grows or turns over often, editing `WHATSAPP_ALLOWED_NUMBERS`
+    in `.env` means a redeploy per person. This instead re-parses the file only
+    when its mtime moves, so adding or removing a number takes effect on the
+    *next* message — no restart, and no cost on the common case where nothing
+    changed since the last check.
+
+    Same `number:role` / `+pay` syntax as `AccessPolicy.parse`, one entry per
+    line. Blank lines and anything after a `#` are ignored, so the file can
+    carry a name/reason next to each number:
+
+        918287151832:admin+pay   # Priya, ops lead
+        919000000001             # bare number -> default_role
+
+    Duck-types `AccessPolicy` (`lookup`, `is_empty`, `__len__`) so `AccessGuard`
+    does not need to know which kind of policy it was given.
+    """
+
+    def __init__(self, path: str, default_role: Role = Role.VIEWER) -> None:
+        self._path = Path(path)
+        self._default_role = default_role
+        self._mtime: float | None = None
+        self._policy = AccessPolicy()
+
+    def _reload_if_changed(self) -> None:
+        try:
+            mtime = self._path.stat().st_mtime
+        except OSError:
+            if self._mtime is not None:
+                logger.warning(
+                    "Allowlist file %s is now unreadable — keeping the last "
+                    "known list rather than locking everyone out", self._path,
+                )
+            return
+
+        if mtime == self._mtime:
+            return
+
+        lines = (
+            line.split("#", 1)[0].strip()
+            for line in self._path.read_text().splitlines()
+        )
+        spec = ",".join(line for line in lines if line)
+        self._policy = AccessPolicy.parse(spec, default_role=self._default_role)
+        self._mtime = mtime
+        logger.info("Reloaded %s from %s (%d number(s))",
+                     type(self).__name__, self._path, len(self._policy))
+
+    def lookup(self, number: str) -> Caller | None:
+        self._reload_if_changed()
+        return self._policy.lookup(number)
+
+    @property
+    def is_empty(self) -> bool:
+        self._reload_if_changed()
+        return self._policy.is_empty
+
+    def __len__(self) -> int:
+        self._reload_if_changed()
+        return len(self._policy)

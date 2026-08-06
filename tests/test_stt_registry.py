@@ -80,6 +80,37 @@ class TestExplicitEngineSelection:
             build_primary_transcriber(settings)
 
 
+class TestFallbackEngine:
+    """STT_ENGINE_FALLBACK — resilience against the primary's key/network
+    failing, independent of the Sarvam-vs-Whisper quality benchmark above."""
+
+    def test_wraps_primary_and_fallback(self):
+        settings = SttSettings(
+            whisper_model="tiny", sarvam_api_key="sarvam-test",
+            engine="local-whisper", fallback_engine="sarvam",
+        )
+        transcriber = build_primary_transcriber(settings)
+        assert transcriber.name == "local-whisper/tiny+fallback:sarvam/saarika:v2.5"
+
+    def test_no_fallback_configured_returns_primary_unwrapped(self):
+        settings = SttSettings(whisper_model="tiny", engine="local-whisper")
+        assert build_primary_transcriber(settings).name == "local-whisper/tiny"
+
+    def test_fallback_engine_not_configured_raises_clearly(self):
+        settings = SttSettings(
+            whisper_model="tiny", engine="local-whisper", fallback_engine="sarvam",
+        )
+        with pytest.raises(RuntimeError, match="STT_ENGINE_FALLBACK='sarvam'.*no configured"):
+            build_primary_transcriber(settings)
+
+    def test_fallback_same_as_primary_raises(self):
+        settings = SttSettings(
+            whisper_model="tiny", engine="local-whisper", fallback_engine="local-whisper",
+        )
+        with pytest.raises(RuntimeError, match="resolves to the same engine"):
+            build_primary_transcriber(settings)
+
+
 class TestTranscriberContract:
     """The base class must time successes and wrap arbitrary engine failures."""
 

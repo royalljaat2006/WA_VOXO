@@ -21,6 +21,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
 from whatsapp_voice import logging_setup  # noqa: E402
+from whatsapp_voice.auth import build_policy  # noqa: E402
 from whatsapp_voice.config import Settings  # noqa: E402
 
 
@@ -83,14 +84,16 @@ def main(argv: list[str] | None = None) -> int:
         print("⚠  AUTH IS DISABLED — every number that reaches this server will be "
               "answered.\n   Never run this way with real data "
               "(docs/phase-5-auth.md).")
-    elif not settings.auth.allowed_numbers.strip():
-        print("✗ WHATSAPP_ALLOWED_NUMBERS is empty — every request will be denied.\n"
-              "  Add your number (docs/phase-5-auth.md), or set AUTH_ENABLED=false "
-              "for local testing.")
-        return 1
     else:
-        listed = len([e for e in settings.auth.allowed_numbers.split(",") if e.strip()])
-        print(f"🔒 Auth: {listed} number(s) allowed, "
+        policy = build_policy(settings.auth)
+        if policy.is_empty:
+            source = (f"file {settings.auth.allowed_numbers_file!r}"
+                      if settings.auth.allowed_numbers_file else "WHATSAPP_ALLOWED_NUMBERS")
+            print(f"✗ {source} is empty — every request will be denied.\n"
+                  "  Add your number (docs/phase-5-auth.md), or set AUTH_ENABLED=false "
+                  "for local testing.")
+            return 1
+        print(f"🔒 Auth: {len(policy)} number(s) allowed, "
               f"{settings.auth.rate_limit} msgs per "
               f"{int(settings.auth.rate_limit_window_s / 60)} min each")
 

@@ -10,6 +10,7 @@ from __future__ import annotations
 from ..config import SttSettings
 from .base import Transcriber
 from .elevenlabs import ElevenLabsTranscriber
+from .fallback import FallbackTranscriber
 from .local_whisper import LocalWhisperTranscriber
 from .openai_stt import OpenAITranscriber
 from .sarvam import SarvamTranscriber
@@ -67,6 +68,10 @@ def build_primary_transcriber(settings: SttSettings) -> Transcriber:
     without pinning the model version in two places. Left unset, this falls
     back to the first configured engine (the pre-Phase-0 behaviour), so a
     checkout with no STT_ENGINE still runs on local Whisper alone.
+
+    `settings.fallback_engine` (from `STT_ENGINE_FALLBACK`), if set, is matched
+    the same way and wrapped around the primary via `FallbackTranscriber` — the
+    fallback only runs when the primary raises.
     """
     engines = build_transcribers(settings)
     if not engines:
@@ -75,13 +80,25 @@ def build_primary_transcriber(settings: SttSettings) -> Transcriber:
             "or leave RUN_LOCAL_WHISPER=1."
         )
 
-    if settings.engine:
-        match = next((e for e in engines if e.name.startswith(settings.engine)), None)
-        if match is None:
-            raise RuntimeError(
-                f"STT_ENGINE={settings.engine!r} but no configured engine matches "
-                f"— configured: {[e.name for e in engines]}. Check its API key is set."
-            )
-        return match
+    primary = _match(engines, settings.engine, "STT_ENGINE") if settings.engine else engines[0]
 
-    return engines[0]
+    if settings.fallback_engine:
+        fallback = _match(engines, settings.fallback_engine, "STT_ENGINE_FALLBACK")
+        if fallback is primary:
+            raise RuntimeError(
+                f"STT_ENGINE_FALLBACK={settings.fallback_engine!r} resolves to the same "
+                f"engine as STT_ENGINE ({primary.name!r}) — pick a different one."
+            )
+        return FallbackTranscriber(primary, fallback)
+
+    return primary
+
+
+def _match(engines: list[Transcriber], name: str, label: str) -> Transcriber:
+    match = next((e for e in engines if e.name.startswith(name)), None)
+    if match is None:
+        raise RuntimeError(
+            f"{label}={name!r} but no configured engine matches "
+            f"— configured: {[e.name for e in engines]}. Check its API key is set."
+        )
+    return match
