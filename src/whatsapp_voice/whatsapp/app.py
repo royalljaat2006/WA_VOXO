@@ -22,9 +22,11 @@ from __future__ import annotations
 
 import json
 import logging
+from pathlib import Path
 
 from fastapi import BackgroundTasks, FastAPI, Query, Request, Response, status
 
+from ..audit import AuditTrail
 from ..auth import AccessGuard
 from ..config import Settings, WhatsAppSettings
 from ..store import KeyValueStore, MemoryStore, build_store, guard_worker_count
@@ -70,6 +72,27 @@ def build_handler(settings: Settings, store: KeyValueStore | None = None) -> Mes
             allow_payments_in_groups=settings.groups.allow_payments,
         )
 
+    superusers = settings.auth.superusers
+    if superusers and settings.auth.allowed_numbers_file:
+        from ..auth.admin_flow import AdminFlow
+        from ..auth.roster import Roster
+        from .admin_handler import AdminHandler
+
+        # Inside the guard, deliberately: a super-user still has to be on the
+        # allowlist and still counts against the rate limit. This grants no
+        # access of its own — only the ability to run commands once already in.
+        inner = AdminHandler(
+            inner,
+            client,
+            AdminFlow(Roster(settings.auth.allowed_numbers_file), _audit_trail(settings)),
+            superusers,
+        )
+    elif superusers:
+        logger.warning(
+            "WHATSAPP_SUPERUSER_NUMBERS is set but WHATSAPP_ALLOWED_NUMBERS_FILE is "
+            "not — admin commands need a file to edit and are disabled."
+        )
+
     return GuardedHandler(
         inner, AccessGuard.from_settings(settings.auth, store), client
     )
@@ -80,6 +103,35 @@ def build_handler(settings: Settings, store: KeyValueStore | None = None) -> Mes
 #: uses. A module-level handoff rather than a return-type change, because every
 #: other handler branch has nothing to hand back.
 _payment_parts: dict[str, object] = {}
+
+
+def _innermost(handler: MessageHandler) -> MessageHandler:
+    """Unwrap every wrapper to the handler that decides the behaviour.
+
+    `/health` answers "what is actually deployed?", and the useful answer is
+    `PaymentHandler`, not the name of whichever wrapper happens to be outermost.
+    Unwrapping one level was enough when `GuardedHandler` was the only wrapper;
+    it silently started reporting the wrapper once a second one could be added.
+    """
+    seen = 0
+    while (nested := getattr(handler, "inner", None)) is not None and seen < 10:
+        handler = nested
+        seen += 1
+    return handler
+
+
+def _audit_trail(settings: Settings) -> AuditTrail:
+    """The payment stack's own trail when there is one, otherwise a fresh one.
+
+    Reusing the existing instance matters: `AuditTrail` serialises writes with a
+    per-instance lock, so two instances appending to one file could interleave
+    and produce a corrupt line — the one thing an evidence file cannot afford.
+    """
+    existing = _payment_parts.get("audit")
+    if isinstance(existing, AuditTrail):
+        return existing
+    path = settings.payments.audit_path
+    return AuditTrail(Path(path)) if path else AuditTrail(None)
 
 
 def _build_inner(settings: Settings, client: WhatsAppClient) -> MessageHandler:
@@ -218,10 +270,9 @@ def create_app(
         which handler, whether auth is on, whether the data is real. Deliberately
         contains no secrets and no phone numbers.
         """
-        inner = getattr(handler, "inner", handler)
         return {
             "status": "ok",
-            "handler": type(inner).__name__,
+            "handler": type(_innermost(handler)).__name__,
             "auth_enabled": settings.auth.enabled,
             "signature_verification": bool(whatsapp.app_secret),
             # Every handler that reaches the agent reaches the data source, so

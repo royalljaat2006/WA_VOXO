@@ -247,6 +247,13 @@ class AuthSettings:
     #: a team that turns over often add/remove a number without a redeploy.
     allowed_numbers_file: str = ""
     default_role: str = "viewer"
+    #: Numbers that may run the allowlist commands in `auth/admin_flow.py`.
+    #: Deliberately env-only and never in `allowed_numbers_file`: if this list
+    #: lived in the file the commands can edit, a super-user could mint more
+    #: super-users from a phone, and one borrowed handset would be permanent.
+    #: A super-user must ALSO be on the allowlist — this grants no access of its
+    #: own, so a leaked list of super-user numbers is not a way in.
+    superuser_numbers: str = ""
     #: Messages per caller per window.
     rate_limit: int = 20
     rate_limit_window_s: float = 3600.0
@@ -258,8 +265,20 @@ class AuthSettings:
             allowed_numbers=os.getenv("WHATSAPP_ALLOWED_NUMBERS", ""),
             allowed_numbers_file=os.getenv("WHATSAPP_ALLOWED_NUMBERS_FILE", ""),
             default_role=os.getenv("AUTH_DEFAULT_ROLE", "viewer").strip().lower(),
+            superuser_numbers=os.getenv("WHATSAPP_SUPERUSER_NUMBERS", ""),
             rate_limit=int(os.getenv("AUTH_RATE_LIMIT", "20")),
             rate_limit_window_s=float(os.getenv("AUTH_RATE_LIMIT_WINDOW_S", "3600")),
+        )
+
+    @property
+    def superusers(self) -> frozenset[str]:
+        """Normalised, so a formatted number in `.env` still matches a webhook's."""
+        from .auth.policy import normalise_number
+
+        return frozenset(
+            normalise_number(entry)
+            for entry in self.superuser_numbers.split(",")
+            if normalise_number(entry)
         )
 
 

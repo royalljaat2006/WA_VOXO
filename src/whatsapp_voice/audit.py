@@ -54,6 +54,9 @@ class AuditEvent:
     EXPIRED = "intent_expired"
     #: A caller tried to pay without the capability, or with no verified caller.
     REFUSED = "transfer_refused"
+    #: Allowlist changes made by a super-user — see `AuditTrail.roster_changed`.
+    USER_ADDED = "user_added"
+    USER_REMOVED = "user_removed"
 
 
 class AuditTrail:
@@ -145,6 +148,16 @@ class AuditTrail:
     def refused(self, payer: str, reason: str, **extra: Any) -> None:
         """A transfer that never became an intent — no capability, no caller."""
         self.record(AuditEvent.REFUSED, payer=payer, reason=reason, **extra)
+
+    def roster_changed(self, action: str, actor: str, subject: str, **extra: Any) -> None:
+        """Who granted or revoked whose access, and when.
+
+        Not money, but the same character of evidence and the same rules: an
+        investigation into a transfer needs to know who could reach the system
+        that day, and a record of that which can be edited afterwards is not
+        evidence. `actor` is the super-user who sent the command.
+        """
+        self.record(action, actor=actor, subject=subject, **extra)
 
 
 def _intent_fields(intent: Any) -> dict[str, Any]:

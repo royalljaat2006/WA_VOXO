@@ -325,6 +325,21 @@ class TestAuthSettings:
         monkeypatch.setenv("WHATSAPP_ALLOWED_NUMBERS_FILE", "/srv/allowed.txt")
         assert AuthSettings.from_env().allowed_numbers_file == "/srv/allowed.txt"
 
+    def test_no_superusers_by_default(self):
+        assert AuthSettings().superusers == frozenset()
+
+    def test_superusers_are_normalised(self, monkeypatch):
+        """A number formatted in .env must match the bare digits a webhook sends."""
+        monkeypatch.setenv("WHATSAPP_SUPERUSER_NUMBERS", "+91 82871-51832, 919000000001")
+        assert AuthSettings.from_env().superusers == {"918287151832", "919000000001"}
+
+    def test_superusers_are_env_only_never_from_the_file(self, monkeypatch):
+        """If this list lived in the file the commands can edit, a super-user
+        could mint more super-users from a phone."""
+        monkeypatch.setenv("WHATSAPP_ALLOWED_NUMBERS_FILE", "/srv/allowed.txt")
+        monkeypatch.delenv("WHATSAPP_SUPERUSER_NUMBERS", raising=False)
+        assert AuthSettings.from_env().superusers == frozenset()
+
     def test_reads_env(self, monkeypatch):
         monkeypatch.setenv("WHATSAPP_ALLOWED_NUMBERS", "919876543210:analyst")
         monkeypatch.setenv("AUTH_RATE_LIMIT", "5")

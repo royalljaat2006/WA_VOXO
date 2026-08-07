@@ -131,7 +131,7 @@ class TestWarmup:
 class TestBuildHandler:
     def test_agent_handler_is_selected_by_config(self, monkeypatch):
         from whatsapp_voice.config import Settings
-        from whatsapp_voice.whatsapp.app import build_handler
+        from whatsapp_voice.whatsapp.app import _innermost, build_handler
 
         monkeypatch.setenv("WHATSAPP_ACCESS_TOKEN", "tok")
         monkeypatch.setenv("WHATSAPP_PHONE_NUMBER_ID", "123")
@@ -139,9 +139,16 @@ class TestBuildHandler:
         monkeypatch.setenv("HANDLER", "agent")
         monkeypatch.setenv("RUN_LOCAL_WHISPER", "1")
         monkeypatch.setenv("WHISPER_MODEL", "tiny")
+        # `Settings.load()` reads the developer's own .env for anything not set
+        # here, so the wrappers have to be pinned off or this asserts against
+        # whatever that file happens to say today.
+        monkeypatch.setenv("WHATSAPP_SUPERUSER_NUMBERS", "")
+        monkeypatch.setenv("GROUPS_ENABLED", "false")
 
         handler = build_handler(Settings.load())
-        assert isinstance(handler.inner, AgentHandler)
+        # Innermost, not `.inner`: the question is which behaviour HANDLER chose,
+        # and any number of wrappers may sit above it.
+        assert isinstance(_innermost(handler), AgentHandler)
 
     def test_unknown_handler_names_the_valid_options(self, monkeypatch):
         from whatsapp_voice.config import Settings

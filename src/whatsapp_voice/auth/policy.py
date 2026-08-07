@@ -209,30 +209,35 @@ class FileBackedAccessPolicy:
     def __init__(self, path: str, default_role: Role = Role.VIEWER) -> None:
         self._path = Path(path)
         self._default_role = default_role
-        self._mtime: float | None = None
+        self._stamp: tuple[int, int] | None = None
         self._policy = AccessPolicy()
 
     def _reload_if_changed(self) -> None:
         try:
-            mtime = self._path.stat().st_mtime
+            stat = self._path.stat()
         except OSError:
-            if self._mtime is not None:
+            if self._stamp is not None:
                 logger.warning(
                     "Allowlist file %s is now unreadable — keeping the last "
                     "known list rather than locking everyone out", self._path,
                 )
             return
 
-        if mtime == self._mtime:
+        # Size as well as mtime, and nanoseconds rather than seconds: `Roster`
+        # writes this file programmatically, so two changes can land inside one
+        # coarse mtime tick. Missing the second would leave a revoked number
+        # still working.
+        stamp = (stat.st_mtime_ns, stat.st_size)
+        if stamp == self._stamp:
             return
 
         lines = (
             line.split("#", 1)[0].strip()
-            for line in self._path.read_text().splitlines()
+            for line in self._path.read_text(encoding="utf-8").splitlines()
         )
         spec = ",".join(line for line in lines if line)
         self._policy = AccessPolicy.parse(spec, default_role=self._default_role)
-        self._mtime = mtime
+        self._stamp = stamp
         logger.info("Reloaded %s from %s (%d number(s))",
                      type(self).__name__, self._path, len(self._policy))
 
