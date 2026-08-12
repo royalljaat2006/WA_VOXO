@@ -7,6 +7,11 @@
 Phase 1 proved we can *send*. This phase proves we can *receive* — which is the
 half that needs a public HTTPS URL, because Meta pushes messages to us.
 
+> **Webhook verified but no messages arriving? Verification failing?** See
+> **[meta-integration-runbook.md](meta-integration-runbook.md)** §4 and §6 — including
+> the `messages` subscription step that is separate from verification and fails
+> silently, and why a self-signed certificate can never work here.
+
 ---
 
 ## Prerequisites

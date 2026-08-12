@@ -214,6 +214,7 @@ Every setting is documented in [`.env.example`](.env.example) with the reasoning
 ## Documentation
 
 - **[Architecture](docs/ARCHITECTURE.md)** — how the pieces fit, every diagram, file-by-file map, where new code goes
+- **[Meta integration runbook](docs/meta-integration-runbook.md)** — **read this before touching the Meta dashboard.** Tokens, webhooks, and every failure this integration has produced, each with its fix
 - **[Voice payments](docs/voice-payments.md)** — the PIN gate, amount parsing, every safety limit, the eko contract
 - **[Implementation plan](docs/IMPLEMENTATION_PLAN.md)** — status, phases, risks, decision log
 - **[Demo UI](docs/demo-ui.md)** — presenting the system without Meta credentials

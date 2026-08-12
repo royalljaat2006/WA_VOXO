@@ -9,6 +9,12 @@ These are steps **only you can do** — they involve a Meta account and your own
 credentials. The code that uses the credentials is already built and tested; this
 runbook just gets you the values that go in `.env`.
 
+> **Taking over this project, or hitting an error?** Read
+> **[meta-integration-runbook.md](meta-integration-runbook.md)** — it collects every
+> Meta-side failure this project has actually produced with its fix, the token trap
+> that cost three rounds of debugging, and the webhook step that fails silently.
+> This page is the happy path; that one is everything else.
+
 ---
 
 ## What you'll end up with
