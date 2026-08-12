@@ -21,7 +21,7 @@ ON = date(2026, 8, 4)
 
 def settings(**overrides) -> EkoSettings:
     base = dict(
-        base_url="https://api.eko.in:25002",
+        base_url="https://api.eko.in",
         developer_key="dev-key",
         auth_key="auth-key",
         user_code="10472151",

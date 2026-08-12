@@ -10,11 +10,12 @@ reads, in whatever language they spoke.
 from __future__ import annotations
 
 import logging
+from dataclasses import replace
 
 from ..audit import AuditTrail
 from ..auth.policy import current_caller
 from ..config import PaymentSettings
-from .parsing import format_amount, parse_amount_paise
+from .parsing import format_amount, parse_amount_paise, parse_vpa
 from .payments import (
     ContactBook,
     Payee,
@@ -45,6 +46,10 @@ have not resolved.
 - Pass the amount to prepare_transfer exactly as the user said it — "do hazaar", \
 "2000", "दो हज़ार". Do not convert it to a number yourself; the system parses it, \
 and a conversion you make silently could be wrong.
+- If the user also mentions the payee's UPI ID (VPA, e.g. "ramesh@okaxis"), pass \
+it to prepare_transfer's optional `vpa` argument — it rides along as extra \
+confirmation, never as a substitute for resolving the phone number first. Do \
+not ask for a UPI ID unprompted; only pass one if the user volunteered it.
 - **Never ask for a PIN unless prepare_transfer has just succeeded in this same \
 turn.** Saying "PIN boliye" when nothing is prepared invites the user to say a \
 secret out loud for no reason, and nothing will happen when they do. If you \
@@ -81,6 +86,27 @@ def _resolve(gateway: PaymentGateway, contacts: ContactBook, payee: str) -> Paye
         is_new=resolved.is_new,
         source=PayeeSource.CONTACT_CARD,
     )
+
+
+def _with_optional_vpa(payee: Payee, vpa: str | None) -> Payee:
+    """Attach a user-stated UPI ID to an already-resolved payee.
+
+    Optional and additive only: eko's transfer API has no path that accepts a
+    VPA instead of a phone number (confirmed against a real transfer curl), so
+    this never changes how the payee was resolved — it only rides along as
+    `customer_vpa` in the eventual eko request. A blank/whitespace `vpa` is
+    treated the same as not having said one.
+    """
+    if not vpa or not vpa.strip():
+        return payee
+
+    parsed = parse_vpa(vpa)
+    if parsed is None:
+        raise ToolError(
+            f"'{vpa}' UPI ID jaisa nahi lagta. Ask the user to say it again "
+            "clearly, or skip it if they are not sure."
+        )
+    return replace(payee, vpa=parsed)
 
 
 class ResolvePayeeTool(Tool):
@@ -165,6 +191,14 @@ class PrepareTransferTool(Tool):
                     "'do hazaar', 'दो हज़ार'. Do not convert it yourself."
                 ),
             },
+            "vpa": {
+                "type": "string",
+                "description": (
+                    "Optional. The payee's UPI ID, only if the user also mentioned "
+                    "it, e.g. 'ramesh@okaxis'. Omit entirely if they did not — do "
+                    "not ask for it."
+                ),
+            },
         },
         "required": ["payee", "amount"],
         "additionalProperties": False,
@@ -184,7 +218,7 @@ class PrepareTransferTool(Tool):
         self._contacts = contacts if contacts is not None else ContactBook()
         self._audit = audit if audit is not None else AuditTrail(None)
 
-    def run(self, payee: str, amount: str) -> str:
+    def run(self, payee: str, amount: str, vpa: str | None = None) -> str:
         # Amount parsing lives in parsing.py, not in the model. A model that
         # "helpfully" converts 'do hazaar' itself is a model that can get it
         # wrong silently.
@@ -224,6 +258,8 @@ class PrepareTransferTool(Tool):
             resolved = _resolve(self._gateway, self._contacts, payee)
         except PaymentError as exc:
             raise ToolError(str(exc)) from exc
+
+        resolved = _with_optional_vpa(resolved, vpa)
 
         if (
             self._settings.payee_input_mode == "contact_only"
@@ -265,9 +301,9 @@ class PrepareTransferTool(Tool):
         self._audit.prepared(intent, gateway=type(self._gateway).__name__)
 
         logger.info(
-            "Intent %s prepared: %s paise to %s (new=%s source=%s)",
+            "Intent %s prepared: %s paise to %s (new=%s source=%s vpa=%s)",
             intent.intent_id, amount_paise, resolved.phone,
-            resolved.is_new, resolved.source.value,
+            resolved.is_new, resolved.source.value, bool(resolved.vpa),
         )
 
         lines = [

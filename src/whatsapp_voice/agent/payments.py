@@ -83,14 +83,22 @@ class PayeeSource(StrEnum):
 class Payee:
     """Who the money is going to.
 
-    `resolved_name` is what makes a wrong number catchable by a human: nobody
+    `phone` is the required identifier — confirmed against a real eko request:
+    the transfer always goes as `recipient_id_type: mobile_number` /
+    `customer_id: <phone>`, no exceptions. `vpa` is optional extra information
+    — when the user also states a UPI ID, it rides along as eko's
+    `customer_vpa` field, but it never replaces the phone number because eko's
+    API has no path that accepts a VPA alone.
+
+    `resolved_name` is what makes a wrong payee catchable by a human: nobody
     notices a transposed digit, everybody notices the wrong name.
     """
 
     phone: str
+    vpa: str | None = None
     resolved_name: str | None = None
     masked_account: str | None = None
-    #: True when this payer has never sent to this number before. Drives the
+    #: True when this payer has never sent to this payee before. Drives the
     #: first-time cap — the main protection when payees are arbitrary.
     is_new: bool = True
     source: PayeeSource = PayeeSource.DICTATED

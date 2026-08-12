@@ -29,6 +29,11 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
+# Windows' default console codepage (cp1252) can't encode the symbols this
+# script prints — see the matching fix in run_server.py.
+sys.stdout.reconfigure(encoding="utf-8")
+sys.stderr.reconfigure(encoding="utf-8")
+
 import requests  # noqa: E402
 
 from whatsapp_voice.config import Settings  # noqa: E402

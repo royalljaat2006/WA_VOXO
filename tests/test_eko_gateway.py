@@ -19,7 +19,7 @@ PAYER = "919406921732"
 
 def settings(**overrides) -> EkoSettings:
     base = dict(
-        base_url="https://api.eko.in:25002",
+        base_url="https://api.eko.in",
         developer_key="dev-key",
         auth_key="auth-key",
         user_code="10472151",
@@ -176,7 +176,7 @@ class TestTransferRequest:
         gw = gateway(session)
         gw.confirm_and_execute(gw.prepare_transfer(PAYER, payee, 100_000), "5353")
 
-        assert session.posts[-1]["url"] == "https://api.eko.in:25002/ekoicici/v1/request"
+        assert session.posts[-1]["url"] == "https://api.eko.in/ekoicici/v1/request"
 
     def test_sends_ekos_three_auth_headers(self, payee):
         session = FakeSession()
@@ -207,6 +207,40 @@ class TestTransferRequest:
         assert headers["developer_key"] == ""
         assert headers["secret_key"] == ""
         assert headers["secret_key_timestamp"].isdigit()
+
+
+class TestRecipientIdAndVpa:
+    """Confirmed against a real, successful transfer curl from eko: the payee
+    is always a mobile number. A VPA the user also gave rides along as an
+    optional, separate field — it is never the primary identifier."""
+
+    def test_recipient_id_type_is_always_mobile_number(self, payee):
+        session = FakeSession()
+        gw = gateway(session)
+        gw.confirm_and_execute(gw.prepare_transfer(PAYER, payee, 100_000), "5353")
+
+        assert session.last_body["recipient_id_type"] == "mobile_number"
+
+    def test_no_vpa_means_no_customer_vpa_field(self, payee):
+        session = FakeSession()
+        gw = gateway(session)
+        gw.confirm_and_execute(gw.prepare_transfer(PAYER, payee, 100_000), "5353")
+
+        assert "customer_vpa" not in session.last_body
+
+    def test_a_stated_vpa_is_sent_unmasked_alongside_the_phone_number(self):
+        payee = Payee(
+            phone="9002331157", vpa="baba.saurabh@okicici",
+            resolved_name="RAM", source=PayeeSource.DIRECTORY,
+        )
+        session = FakeSession()
+        gw = gateway(session)
+        gw.confirm_and_execute(gw.prepare_transfer(PAYER, payee, 100_000), "5353")
+        body = session.last_body
+
+        assert body["recipient_id_type"] == "mobile_number"
+        assert body["customer_id"] == "9002331157"
+        assert body["customer_vpa"] == "baba.saurabh@okicici"
 
 
 class TestAmountConversion:

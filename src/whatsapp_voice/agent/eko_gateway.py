@@ -6,7 +6,7 @@ to `PaymentGateway` and do not care what is behind it.
 
 Written against the eko ICICI fund-transfer contract:
 
-    POST {base}/ekoicici/v1/request
+    POST {base}/ekoicici/v1/request        (base: https://api.eko.in — no port)
     headers: developer_key, secret_key, secret_key_timestamp
     body:    { amount, customer_id, initiator_id, pintwin, client_ref_id, … }
 
@@ -42,6 +42,15 @@ that is only noticed at reconciliation. **Confirmed with eko's platform team:
   `EKO_VERIFY_PATH` / `field_payee_name` are not worth wiring up for a name.
 - **`developer_key`, `secret_key`, `secret_key_timestamp` must always be
   present as headers, even with an empty value** — see `eko_auth_headers`.
+- **`base_url` has no port.** `https://api.eko.in/ekoicici/v1/request` — an
+  earlier guess of `:25002` was wrong, corrected against a real working curl.
+- **`recipient_id_type` is always `mobile_number`, never `vpa`.** Confirmed
+  against a real, successful transfer curl: `customer_id` is the recipient's
+  10-digit mobile number, full stop — eko's transfer API has no path that
+  accepts a UPI ID as the primary identifier. A VPA is optional *extra*
+  information, sent alongside the mobile number as `customer_vpa` — see
+  `confirm_and_execute`. This directly contradicts an earlier, unconfirmed
+  guess in this file; that guess was wrong.
 
 ### What still needs confirming with eko
 
@@ -100,11 +109,16 @@ class EkoPaymentGateway(PaymentGateway):
         """Recipient mobile → payee.
 
         eko's transfer request takes `recipient_id_type: mobile_number`, so a
-        mobile is all that is strictly needed. eko's platform team confirmed
-        there is no payee-name lookup — a name is never returned — so this
-        always comes back as `PayeeSource.DICTATED`, `needs_digit_readback` is
-        always true, and the digits get read back aloud. That is not a
-        degraded fallback; it is the only path there is.
+        mobile is all that is strictly needed — confirmed against a real
+        transfer curl; there is no path that accepts a VPA instead. A VPA a
+        user also states is attached separately, in `prepare_transfer` — see
+        `agent/payment_tools.py`.
+
+        eko's platform team confirmed there is no payee-name lookup — a name
+        is never returned — so this always comes back as
+        `PayeeSource.DICTATED`, `needs_digit_readback` is always true, and the
+        digits get read back aloud. That is not a degraded fallback; it is the
+        only path there is.
         """
         digits = "".join(c for c in (phone or "") if c.isdigit())
         if len(digits) < 10:
@@ -184,6 +198,9 @@ class EkoPaymentGateway(PaymentGateway):
             "interaction_type_id": self._settings.interaction_type_id,
             "user_code": self._settings.user_code,
             "initiator_id": self._settings.initiator_id,
+            # Confirmed against a real transfer curl: always mobile_number.
+            # eko's transfer API has no path that takes a VPA as the primary
+            # identifier — see the module docstring.
             "recipient_id_type": "mobile_number",
             "customer_id": intent.payee.phone,
             "recipient_name": intent.payee.resolved_name or "",
@@ -199,8 +216,11 @@ class EkoPaymentGateway(PaymentGateway):
             # The spoken PIN. Nothing else in this module may touch it.
             "pintwin": pin,
         }
-        if intent.payee.masked_account and self._settings.send_vpa:
-            payload["customer_vpa"] = intent.payee.masked_account
+        # Optional extra info, only when the user also stated a UPI ID — never
+        # a substitute for customer_id above, and never the masked display
+        # form: eko needs the real VPA to do anything useful with it.
+        if intent.payee.vpa:
+            payload["customer_vpa"] = intent.payee.vpa
 
         del pin
 

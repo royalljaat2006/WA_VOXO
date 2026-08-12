@@ -229,6 +229,33 @@ def format_amount(paise: int) -> str:
 
 # -------------------------------------------------------------------- PIN
 
+#: A UPI VPA: `local-part@handle`, e.g. `ramesh@okaxis`. The handle is the PSP
+#: code (bank/wallet), always alphanumeric starting with a letter; the local
+#: part is looser, matching what NPCI actually allows.
+_VPA_RE = re.compile(r"^[a-zA-Z0-9.\-_]{2,256}@[a-zA-Z][a-zA-Z0-9]{1,63}$")
+
+
+def parse_vpa(text: str) -> str | None:
+    """Extract a UPI VPA from speech or text. None if it is not unambiguously one.
+
+    Accepts a literal `ramesh@okaxis` as well as the spoken forms ASR actually
+    produces for '@' — `ramesh at okaxis`, `ramesh at the rate okaxis`.
+
+    Deliberately strict, same reasoning as `extract_pin`: a string that is not
+    clearly `local@handle` returns None rather than a best guess, so the caller
+    asks the user again instead of resolving to the wrong account.
+    """
+    if not text:
+        return None
+
+    normalised = " ".join(text.strip().split())
+    normalised = re.sub(r"\s+at\s+the\s+rate\s+", "@", normalised, flags=re.IGNORECASE)
+    normalised = re.sub(r"\s+at\s+", "@", normalised, flags=re.IGNORECASE)
+    normalised = normalised.replace(" ", "").lower()
+
+    return normalised if _VPA_RE.match(normalised) else None
+
+
 def extract_pin(text: str, lengths: tuple[int, ...] = (4, 6)) -> str | None:
     """Pull a PIN out of speech. None if it is not unambiguously one.
 

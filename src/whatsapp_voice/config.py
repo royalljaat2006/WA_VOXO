@@ -460,8 +460,6 @@ class EkoSettings:
     #: eko echoes the caller's IP back for its own fraud checks.
     source_ip: str = ""
     next_allowed_limit: str = "25000"
-    #: Whether to send `customer_vpa` alongside the mobile number.
-    send_vpa: bool = False
 
     # --- endpoints, relative to base_url ---
     transfer_path: str = "/ekoicici/v1/request"
@@ -525,7 +523,6 @@ class EkoSettings:
             latlong=os.getenv("EKO_LATLONG", ""),
             source_ip=os.getenv("EKO_SOURCE_IP", ""),
             next_allowed_limit=os.getenv("EKO_NEXT_ALLOWED_LIMIT", "25000"),
-            send_vpa=_flag("EKO_SEND_VPA", False),
             transfer_path=os.getenv("EKO_TRANSFER_PATH", "/ekoicici/v1/request"),
             verify_path=os.getenv("EKO_VERIFY_PATH", ""),
             spent_today_path=os.getenv("EKO_SPENT_TODAY_PATH", ""),

@@ -96,6 +96,40 @@ class TestPrepareTransferTool:
         assert gateway.executed == []
 
 
+class TestOptionalVpa:
+    """A UPI ID is never required, but rides along on the intent when given —
+    see `_with_optional_vpa` in payment_tools.py."""
+
+    def test_no_vpa_leaves_the_intent_without_one(self, prepare_tool, pending):
+        prepare_tool.run(payee="Ramesh", amount="2000")
+        assert pending.get(PAYER).payee.vpa is None
+
+    def test_a_valid_vpa_is_attached_to_the_intent(self, prepare_tool, pending):
+        prepare_tool.run(payee="Ramesh", amount="2000", vpa="ramesh@okaxis")
+        assert pending.get(PAYER).payee.vpa == "ramesh@okaxis"
+
+    def test_spoken_at_is_understood(self, prepare_tool, pending):
+        """ASR renders '@' as the word 'at', never the symbol."""
+        prepare_tool.run(payee="Ramesh", amount="2000", vpa="ramesh at okaxis")
+        assert pending.get(PAYER).payee.vpa == "ramesh@okaxis"
+
+    def test_resolving_the_payee_is_unaffected_by_a_vpa(self, prepare_tool, pending):
+        """The VPA is extra information, not a different payee-resolution path —
+        the phone number is still what named this payee."""
+        prepare_tool.run(payee="Ramesh", amount="2000", vpa="ramesh@okaxis")
+        assert pending.get(PAYER).payee.phone == "919876543210"
+        assert pending.get(PAYER).payee.resolved_name == "Ramesh Kumar"
+
+    def test_garbage_vpa_is_a_tool_error(self, prepare_tool, pending):
+        with pytest.raises(ToolError):
+            prepare_tool.run(payee="Ramesh", amount="2000", vpa="mera koi UPI nahi hai")
+        assert pending.get(PAYER) is None
+
+    def test_blank_vpa_is_the_same_as_not_given(self, prepare_tool, pending):
+        prepare_tool.run(payee="Ramesh", amount="2000", vpa="")
+        assert pending.get(PAYER).payee.vpa is None
+
+
 class TestLimits:
     def test_above_the_per_transaction_cap_is_refused(self, prepare_tool):
         with pytest.raises(ToolError, match="limit"):

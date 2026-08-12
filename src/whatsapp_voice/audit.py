@@ -17,7 +17,9 @@ prove it?" — which is a different question with different rules:
 Phone numbers *are* recorded in full, unlike the application log where they are
 masked. An audit trail whose subject cannot be identified is not one. That makes
 this file personal data under DPDP: it belongs on encrypted storage with a stated
-retention period, and it is not something to tail into a chat window.
+retention period, and it is not something to tail into a chat window. When the
+user also states a UPI ID, it is recorded too, in `payee_vpa` — extra, never a
+substitute for the phone number.
 
 ### Format
 
@@ -175,6 +177,8 @@ def _intent_fields(intent: Any) -> dict[str, Any]:
     }
     if payee is not None:
         fields["payee"] = getattr(payee, "phone", None)
+        # Optional extra: only present when the user also stated a UPI ID.
+        fields["payee_vpa"] = getattr(payee, "vpa", None)
         fields["payee_name"] = getattr(payee, "resolved_name", None)
         source = getattr(payee, "source", None)
         fields["payee_source"] = getattr(source, "value", None) or str(source or "")

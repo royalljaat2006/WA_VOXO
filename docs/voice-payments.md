@@ -190,7 +190,7 @@ is allowed to *try*.
 ICICI fund-transfer contract:
 
 ```
-POST https://api.eko.in:25002/ekoicici/v1/request
+POST https://api.eko.in/ekoicici/v1/request
 headers: developer_key, secret_key, secret_key_timestamp
 body:    { amount, customer_id, initiator_id, pintwin, client_ref_id, … }
 ```
@@ -223,6 +223,14 @@ with the country code.
    as required for this reason; `eko_auth_headers` sends `secret_key: ""` when
    neither an auth key nor a static secret is configured, rather than an HMAC
    of an empty key masquerading as a real one.
+5. **`base_url` carries no port.** `https://api.eko.in` — an earlier guess of
+   `:25002` was wrong.
+6. **The payee is always a mobile number, never a VPA.** Confirmed against a
+   real, successful transfer curl: `recipient_id_type: mobile_number` /
+   `customer_id: <10-digit mobile>` is the only accepted shape — there is no
+   `recipient_id_type: vpa`. A UPI ID the user also states is optional extra
+   information, sent alongside as `customer_vpa` (the *real* VPA, not a masked
+   display form) — it never substitutes for the phone number.
 
 ### Still to confirm with eko before this goes live
 
