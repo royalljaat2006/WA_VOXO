@@ -27,14 +27,12 @@ from pathlib import Path
 from fastapi import BackgroundTasks, FastAPI, Query, Request, Response, status
 
 from ..audit import AuditTrail
-from ..auth import AccessGuard
 from ..config import Settings, WhatsAppSettings
 from ..store import KeyValueStore, MemoryStore, build_store, guard_worker_count
 from .client import WhatsAppClient
 from .handlers import (
     AgentHandler,
     EchoHandler,
-    GuardedHandler,
     MessageHandler,
     TranscribeHandler,
 )
@@ -45,25 +43,24 @@ logger = logging.getLogger(__name__)
 
 
 def build_handler(settings: Settings, store: KeyValueStore | None = None) -> MessageHandler:
-    """Pick the handler named by `HANDLER`, wrapped in the access guard.
+    """Pick the handler named by `HANDLER`.
 
     Each phase adds one line to `_build_inner`. The alternative — an `if` inside
     the webhook route — would mean reopening the transport layer every phase,
     which is what the `MessageHandler` seam exists to avoid.
 
-    The guard wraps whatever comes back, so authorisation cannot be forgotten
-    when a new handler is added.
+    No access guard: every number that reaches this server is answered. There is
+    no allowlist and no per-number payment permission — anyone who can message
+    this WhatsApp number can talk to whichever handler is configured, payments
+    included, subject only to the amount caps and PIN in `agent/payment_flow.py`.
     """
     store = store or build_store(settings.redis_url)
     client = WhatsAppClient(settings.whatsapp)
-    inner = _build_inner(settings, client)
+    inner = _build_inner(settings, client, store)
 
     if settings.groups.enabled:
         from .group_handler import GroupHandler, GroupRegistry
 
-        # Inside the guard, not outside it: authorisation still runs first, and
-        # a group message from an unknown number is denied before any group
-        # etiquette is considered.
         inner = GroupHandler(
             inner,
             client,
@@ -72,30 +69,7 @@ def build_handler(settings: Settings, store: KeyValueStore | None = None) -> Mes
             allow_payments_in_groups=settings.groups.allow_payments,
         )
 
-    superusers = settings.auth.superusers
-    if superusers and settings.auth.allowed_numbers_file:
-        from ..auth.admin_flow import AdminFlow
-        from ..auth.roster import Roster
-        from .admin_handler import AdminHandler
-
-        # Inside the guard, deliberately: a super-user still has to be on the
-        # allowlist and still counts against the rate limit. This grants no
-        # access of its own — only the ability to run commands once already in.
-        inner = AdminHandler(
-            inner,
-            client,
-            AdminFlow(Roster(settings.auth.allowed_numbers_file), _audit_trail(settings)),
-            superusers,
-        )
-    elif superusers:
-        logger.warning(
-            "WHATSAPP_SUPERUSER_NUMBERS is set but WHATSAPP_ALLOWED_NUMBERS_FILE is "
-            "not — admin commands need a file to edit and are disabled."
-        )
-
-    return GuardedHandler(
-        inner, AccessGuard.from_settings(settings.auth, store), client
-    )
+    return inner
 
 
 #: Set by `_build_inner` when the payment stack is built, so `create_app` can
@@ -109,9 +83,8 @@ def _innermost(handler: MessageHandler) -> MessageHandler:
     """Unwrap every wrapper to the handler that decides the behaviour.
 
     `/health` answers "what is actually deployed?", and the useful answer is
-    `PaymentHandler`, not the name of whichever wrapper happens to be outermost.
-    Unwrapping one level was enough when `GuardedHandler` was the only wrapper;
-    it silently started reporting the wrapper once a second one could be added.
+    `PaymentHandler`, not the name of whichever wrapper happens to be outermost
+    (`GroupHandler`, when groups are enabled).
     """
     seen = 0
     while (nested := getattr(handler, "inner", None)) is not None and seen < 10:
@@ -134,7 +107,9 @@ def _audit_trail(settings: Settings) -> AuditTrail:
     return AuditTrail(Path(path)) if path else AuditTrail(None)
 
 
-def _build_inner(settings: Settings, client: WhatsAppClient) -> MessageHandler:
+def _build_inner(
+    settings: Settings, client: WhatsAppClient, store: KeyValueStore | None = None
+) -> MessageHandler:
     name = settings.handler
 
     if name == "echo":
@@ -169,9 +144,21 @@ def _build_inner(settings: Settings, client: WhatsAppClient) -> MessageHandler:
             )
 
         agent, gateway, pending, contacts, audit = build_payment_stack(
-            settings.agent, settings.payments, settings.eko
+            settings.agent, settings.payments, settings.eko, store
         )
-        _payment_parts.update(gateway=gateway, pending=pending, audit=audit)
+
+        # Only a real gateway can be asked about a transfer, and only when eko
+        # has an inquiry endpoint configured. A stub deployment has nothing to
+        # poll, so it gets no queue and says so in its reply instead.
+        settlements = None
+        if not gateway.is_stub and settings.eko.inquiry_path and store is not None:
+            from ..agent.settlement import SettlementQueue
+
+            settlements = SettlementQueue(store)
+
+        _payment_parts.update(
+            gateway=gateway, pending=pending, audit=audit, settlements=settlements
+        )
         return PaymentHandler(
             client,
             build_primary_transcriber(settings.stt),
@@ -181,6 +168,7 @@ def _build_inner(settings: Settings, client: WhatsAppClient) -> MessageHandler:
             settings.payments,
             contacts,
             audit,
+            settlements=settlements,
         )
 
     raise ValueError(
@@ -258,8 +246,13 @@ def create_app(
         )
         logger.info("Payment callback mounted at /payments/callback (signed)")
 
+    _start_settlement_poller(settings, store)
+
     if settings.demo.enabled:
         _mount_demo(app, settings, handler)
+
+    if settings.ops.enabled:
+        _mount_ops(app, settings)
 
     @app.get("/health")
     def health() -> dict[str, object]:
@@ -267,13 +260,16 @@ def create_app(
 
         Hosting platforms poll this to decide whether the container is up. It also
         answers "what is actually deployed right now?" without shell access —
-        which handler, whether auth is on, whether the data is real. Deliberately
-        contains no secrets and no phone numbers.
+        which handler, whether the data is real. Deliberately contains no
+        secrets and no phone numbers.
         """
         return {
             "status": "ok",
             "handler": type(_innermost(handler)).__name__,
-            "auth_enabled": settings.auth.enabled,
+            # There is no allowlist and no per-number payment permission — every
+            # number that messages this deployment is answered. See
+            # `build_handler`.
+            "access_control": "none",
             "signature_verification": bool(whatsapp.app_secret),
             # Every handler that reaches the agent reaches the data source, so
             # this must not be tied to one handler name.
@@ -400,7 +396,54 @@ def _mount_demo(app: FastAPI, settings: Settings, handler: MessageHandler) -> No
     app.include_router(create_demo_router(deps))
 
     logger.warning(
-        "DEMO API ENABLED at /demo — it bypasses the WhatsApp allowlist. "
-        "Never enable this on a deployment with real data.%s",
+        "DEMO API ENABLED at /demo — it has no verified phone number behind it "
+        "at all (see demo/api.py). Never enable this on a deployment with real "
+        "data.%s",
         "" if settings.demo.token else " No DEMO_TOKEN is set, so it is unauthenticated.",
+    )
+
+
+def _start_settlement_poller(settings: Settings, store: KeyValueStore) -> None:
+    """Follow transfers eko accepted but has not settled, and tell the payer.
+
+    eko publishes no webhook for the initiated → settled transition, so without
+    this the payer's last word on their money is "not confirmed yet" — for
+    ever. Started only when there is a real gateway with an inquiry endpoint;
+    a stub deployment has nothing to ask about.
+    """
+    settlements = _payment_parts.get("settlements")
+    gateway = _payment_parts.get("gateway")
+    if settlements is None or gateway is None:
+        return
+
+    from .settlement_poller import SettlementPoller
+
+    poller = SettlementPoller(
+        settlements,           # type: ignore[arg-type]
+        gateway,
+        WhatsAppClient(settings.whatsapp),
+        interval_s=settings.payments.settlement_poll_interval_s,
+        give_up_after_s=settings.payments.settlement_give_up_after_s,
+        audit=_audit_trail(settings),
+        store=store,
+    )
+    poller.start()
+    _payment_parts["settlement_poller"] = poller
+
+
+def _mount_ops(app: FastAPI, settings: Settings) -> None:
+    """Attach the token-protected `/ops` activity page.
+
+    Only called when OPS_ENABLED is true. Unlike `_mount_demo`, this reads real
+    traffic, so a missing OPS_TOKEN is not a quieter warning — the router itself
+    refuses every request until one is set (see `ops_page._require_token`).
+    """
+    from ..ops_page import create_ops_router
+
+    app.include_router(create_ops_router(settings))
+
+    logger.warning(
+        "OPS ACTIVITY PAGE ENABLED at /ops%s",
+        "" if settings.ops.token else
+        " — NO OPS_TOKEN SET, every request will be refused until one is configured.",
     )

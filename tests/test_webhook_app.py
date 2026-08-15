@@ -63,7 +63,7 @@ class TestHealth:
         """Answers "what is actually running?" without shell access."""
         client, _ = build()
         body = client.get("/health").json()
-        for key in ("handler", "auth_enabled", "signature_verification", "stub_data"):
+        for key in ("handler", "access_control", "signature_verification", "stub_data"):
             assert key in body
 
     def test_health_leaks_no_secrets(self):
@@ -274,7 +274,7 @@ class TestHandlerSelection:
         from whatsapp_voice.whatsapp import EchoHandler as Echo
         from whatsapp_voice.whatsapp.app import build_handler
 
-        assert isinstance(build_handler(self._settings("echo")).inner, Echo)
+        assert isinstance(build_handler(self._settings("echo")), Echo)
 
     def test_transcribe_builds_a_transcribe_handler(self):
         from whatsapp_voice.config import SttSettings
@@ -287,7 +287,7 @@ class TestHandlerSelection:
             handler="transcribe",
         )
         handler = build_handler(settings)
-        assert isinstance(handler.inner, TranscribeHandler)
+        assert isinstance(handler, TranscribeHandler)
 
     def test_unknown_handler_names_the_valid_options(self):
         from whatsapp_voice.whatsapp.app import build_handler

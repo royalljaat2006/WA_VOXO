@@ -22,6 +22,10 @@ data/ground_truth.json
 # Real employee phone numbers (WHATSAPP_ALLOWED_NUMBERS_FILE) — PII, never commit.
 data/allowed_numbers.txt
 
+# Google Cloud service-account keys — never commit. Drop the downloaded JSON
+# key file here and point GOOGLE_APPLICATION_CREDENTIALS at it.
+secrets/
+
 # macOS
 .DS_Store
 

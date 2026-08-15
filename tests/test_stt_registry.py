@@ -23,12 +23,25 @@ class TestBuildTranscribers:
             openai_models=("whisper-1",),
             sarvam_api_key="sarvam-test",
             elevenlabs_api_key="el-test",
+            google_credentials_path="/tmp/creds.json",
         )
         assert [e.name for e in build_transcribers(settings)] == [
             "openai/whisper-1",
             "sarvam/saarika:v2.5",
             "elevenlabs/scribe_v1",
+            "google/latest_long",
         ]
+
+    def test_google_credentials_path_alone_adds_only_google(self):
+        """No key file means the engine is skipped, same as every other
+        engine's missing-key behaviour — construction never touches the
+        network, so this needs no mocking."""
+        settings = SttSettings(
+            run_local_whisper=False,
+            google_credentials_path="/tmp/creds.json",
+            google_model="latest_short",
+        )
+        assert [e.name for e in build_transcribers(settings)] == ["google/latest_short"]
 
     def test_primary_is_first_configured_engine(self):
         settings = SttSettings(run_local_whisper=False, openai_api_key="sk-test")

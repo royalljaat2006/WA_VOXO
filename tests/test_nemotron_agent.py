@@ -148,9 +148,12 @@ class TestWireFormat:
         assert client.requests[0]["temperature"] == settings.temperature
 
     def test_uses_the_nemotron_model_id(self, settings):
+        """`nemotron_model`, not `model` — the latter names the Claude model and
+        sending it to NIM would 404."""
         agent, _, client = make_agent([completion(content="hi")], settings)
         agent.answer("u1", "hello")
-        assert client.requests[0]["model"] == "nvidia/nemotron-3-ultra-550b-a55b"
+        assert client.requests[0]["model"] == settings.nemotron_model
+        assert client.requests[0]["model"] != settings.model
 
     def test_omits_tools_when_none_registered(self, settings):
         client = FakeClient([completion(content="hi")])

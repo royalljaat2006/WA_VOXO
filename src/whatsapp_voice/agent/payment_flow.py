@@ -19,6 +19,7 @@ from __future__ import annotations
 
 import logging
 from dataclasses import dataclass
+from typing import Any
 
 from ..audit import AuditTrail
 from ..config import PaymentSettings
@@ -61,11 +62,16 @@ class PaymentFlow:
         pending: PendingIntents,
         settings: PaymentSettings,
         audit: AuditTrail | None = None,
+        settlements: Any = None,
     ) -> None:
         self._gateway = gateway
         self._pending = pending
         self._settings = settings
         self._audit = audit if audit is not None else AuditTrail(None)
+        #: Where a transfer eko accepted but has not settled goes to be polled.
+        #: Optional: without one the payer is still told the truth, they just
+        #: have to check the outcome themselves. See `agent/settlement.py`.
+        self._settlements = settlements
 
     @property
     def pending(self) -> PendingIntents:
@@ -120,9 +126,14 @@ class PaymentFlow:
     # ------------------------------------------------------------ internals
 
     def _confirm(self, intent: TransferIntent, pin: str) -> FlowOutcome:
-        intent.attempts += 1
         result = self._gateway.confirm_and_execute(intent, pin)
         del pin  # nothing below this line needs it
+
+        # Counted only for a PIN the gateway actually rejected. A timeout or a
+        # gateway fault is not the sender's mistake, and burning an attempt on
+        # it would cancel a legitimate transfer after three network blips.
+        if result.pin_rejected:
+            intent.attempts += 1
 
         if result.ok:
             intent.status = IntentStatus.COMPLETED
@@ -138,6 +149,53 @@ class PaymentFlow:
             )
             return FlowOutcome(reply=receipt(intent, self._gateway))
 
+        if result.pending:
+            # Accepted but not settled. Saying "ho gaya" would be a lie the
+            # sender acts on, and saying "fail" would be a different lie — this
+            # exact state resolved into a reversal hours later. The intent is
+            # closed either way: a retry here would be a second transfer, not a
+            # repeat of this one.
+            intent.status = IntentStatus.FAILED
+            self._pending.clear(intent.payer)
+            logger.warning(
+                "Intent %s pending at eko, ref=%s — outcome unknown",
+                intent.intent_id, result.reference,
+            )
+            self._audit.failed(
+                intent, gateway=type(self._gateway).__name__, reason="pending_at_gateway"
+            )
+
+            watched = self._watch(intent, result.reference)
+            tail = (
+                "Settle hote hi main aapko bata dunga."
+                if watched else
+                "Dobara mat bhejiye — pehle statement check kar lijiye."
+            )
+            return FlowOutcome(reply=(
+                f"⏳ Transfer bheja ja chuka hai, par abhi *confirm nahi* hua.\n"
+                f"Ref: {result.reference}\n\n"
+                f"Paisa ja bhi sakta hai aur wapas bhi aa sakta hai. {tail}"
+            ))
+
+        if not result.pin_rejected:
+            # The transfer failed for a reason that is not the PIN. Saying
+            # "PIN galat hai" here is what let a *successful* eko response be
+            # reported as a wrong PIN for a whole day — the sender re-entered a
+            # correct PIN while the money had already moved. The intent stays
+            # open so a retry does not have to be re-dictated.
+            logger.error(
+                "Intent %s failed (not a PIN rejection): %s",
+                intent.intent_id, result.message or "no message",
+            )
+            self._audit.failed(
+                intent, gateway=type(self._gateway).__name__, reason="gateway_error"
+            )
+            return FlowOutcome(reply=(
+                f"⚠️ {result.message or 'Transfer nahi ho paya.'}\n\n"
+                "Ye PINTWIN ki galti nahi hai — PINTWIN dobara mat bhejiye. "
+                "Pehle check kar lijiye ke paise kate ya nahi."
+            ))
+
         remaining = self._settings.max_pin_attempts - intent.attempts
         if remaining <= 0:
             intent.status = IntentStatus.FAILED
@@ -148,16 +206,46 @@ class PaymentFlow:
                 intent, gateway=type(self._gateway).__name__, reason="pin_attempts_exhausted"
             )
             return FlowOutcome(reply=(
-                f"❌ PIN {intent.attempts} baar galat. Transfer cancel ho gaya. "
+                f"❌ PINTWIN {intent.attempts} baar galat. Transfer cancel ho gaya. "
                 "Dobara shuru karne ke liye phir se boliye."
             ))
 
         logger.info("Intent %s — wrong PIN, %d attempt(s) left",
                     intent.intent_id, remaining)
+        # The intent stays open, so the incremented `attempts` has to be
+        # written back explicitly — `PendingIntents` is store-backed and may
+        # hand back a fresh deserialised copy on the next `.get()`, not the
+        # same object this mutation happened on.
+        self._pending.put(intent)
         self._audit.pin_failed(intent, attempts_left=remaining)
         return FlowOutcome(reply=(
-            f"❌ PIN galat hai. {remaining} koshish baaki — PIN dobara boliye."
+            f"❌ PINTWIN galat hai. {remaining} koshish baaki — PINTWIN dobara boliye."
         ))
+
+
+    def _watch(self, intent: TransferIntent, reference: str | None) -> bool:
+        """Queue a pending transfer for polling. True when it will be followed.
+
+        Failing to queue must not change what the payer is told about their
+        money, so this swallows its own errors and reports honestly instead —
+        the message downgrades to "check it yourself" rather than promising a
+        follow-up that will never come.
+        """
+        if self._settlements is None or not reference:
+            return False
+        try:
+            from .settlement import PendingSettlement
+
+            self._settlements.add(PendingSettlement(
+                reference=reference,
+                payer=intent.payer,
+                amount_paise=intent.amount_paise,
+                payee_display=intent.payee.display,
+            ))
+            return True
+        except Exception:  # noqa: BLE001 - never let bookkeeping break a reply
+            logger.exception("Could not queue settlement ref=%s", reference)
+            return False
 
 
 # --------------------------------------------------------------- helpers

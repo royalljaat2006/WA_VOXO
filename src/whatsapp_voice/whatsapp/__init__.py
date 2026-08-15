@@ -6,7 +6,6 @@ from .group_handler import GroupHandler, GroupRegistry
 from .handlers import (
     AgentHandler,
     EchoHandler,
-    GuardedHandler,
     MessageHandler,
     TranscribeHandler,
 )
@@ -27,7 +26,6 @@ __all__ = [
     "EchoHandler",
     "GroupHandler",
     "GroupRegistry",
-    "GuardedHandler",
     "IncomingMessage",
     "MessageHandler",
     "SharedContact",

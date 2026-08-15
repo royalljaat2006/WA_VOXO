@@ -5,7 +5,7 @@ Only the calls this project needs, each one small and independently testable:
 - send_text        — reply to a user (Phase 1 hello, Phase 2 echo, Phase 4 answers)
 - get_media_url    — resolve a media_id to a temporary download URL (Phase 3)
 - download_media   — fetch the bytes of a voice note (Phase 3)
-- create_group …   — the group calls, which have their own rules; see below
+- send_group_text  — the one group call, which has its own rules; see below
 
 Everything goes through the Graph API at
 `{graph_base_url}/{api_version}/...` with a bearer token. The client is
@@ -21,10 +21,6 @@ from pathlib import Path
 import requests
 
 from ..config import WhatsAppSettings
-
-#: Meta's ceiling for a Cloud API group. Enforced here so the error names the
-#: limit rather than arriving as a generic 400 from Graph.
-MAX_GROUP_PARTICIPANTS = 8
 
 
 class WhatsAppError(RuntimeError):
@@ -88,48 +84,17 @@ class WhatsAppClient:
     #
     #   · The business must CREATE the group. It cannot be added to an existing
     #     one, so "add the bot to your team chat" is not a thing that can happen.
+    #     Group creation and membership are managed outside this codebase —
+    #     there is deliberately no create/invite/remove/leave surface here; see
+    #     "Where a method would be pointless" below.
     #   · One Cloud API business per group, at most 8 participants.
     #   · Interactive messages (buttons, lists) are not delivered to groups, so
     #     every group confirmation has to be plain text or a link.
     #   · An Official Business Account is required.
     #
     # All four are Meta's, not ours. Where a method would be pointless under
-    # them, it is absent rather than present and broken.
-
-    def _groups_url(self, suffix: str = "") -> str:
-        return f"{self._base}/{self._settings.phone_number_id}/groups{suffix}"
-
-    def create_group(self, subject: str, participants: list[str]) -> str:
-        """Create a group and return its id.
-
-        The business has to be the creator — there is no join. `participants` are
-        phone numbers in international format without the '+'.
-        """
-        if not participants:
-            raise WhatsAppError("A group needs at least one participant.")
-        if len(participants) > MAX_GROUP_PARTICIPANTS:
-            raise WhatsAppError(
-                f"WhatsApp allows at most {MAX_GROUP_PARTICIPANTS} participants "
-                f"in a Cloud API group; {len(participants)} were given."
-            )
-
-        data = self._post(self._groups_url(), json={
-            "messaging_product": "whatsapp",
-            "subject": subject,
-            "participants": [{"user": number} for number in participants],
-        })
-        group_id = _first_id(data, "groups") or data.get("id")
-        if not group_id:
-            raise WhatsAppError(f"No group id in create response: {data}")
-        return str(group_id)
-
-    def get_group_invite_link(self, group_id: str) -> str:
-        """The join link, for anyone who could not be added directly."""
-        data = self._get(self._groups_url(f"/{group_id}/invite"))
-        link = data.get("invite_link") or data.get("link")
-        if not link:
-            raise WhatsAppError(f"No invite link in response for {group_id}: {data}")
-        return str(link)
+    # them, it is absent rather than present and broken — this bot only ever
+    # replies into a group it was already added to.
 
     def send_group_text(self, group_id: str, body: str) -> str:
         """Send plain text to a group.
@@ -150,18 +115,6 @@ class WhatsAppClient:
             return data["messages"][0]["id"]
         except (KeyError, IndexError) as exc:
             raise WhatsAppError(f"Unexpected send response shape: {data}") from exc
-
-    def remove_group_participant(self, group_id: str, participant: str) -> None:
-        self._delete(self._groups_url(f"/{group_id}/participants/{participant}"))
-
-    def leave_group(self, group_id: str) -> None:
-        """Delete the group, which is how the business leaves one.
-
-        Meta gives no "leave" for the creator: deleting is the only exit, and it
-        removes the group for everyone. Named for what it means to us and
-        documented for what it does to them.
-        """
-        self._delete(self._groups_url(f"/{group_id}"))
 
     # -------------------------------------------------------------- media
 
@@ -233,10 +186,3 @@ class WhatsAppClient:
             f"{context} failed: HTTP {response.status_code} — {detail}",
             status_code=response.status_code,
         )
-
-
-def _first_id(data: dict, key: str) -> str | None:
-    entries = data.get(key)
-    if isinstance(entries, list) and entries and isinstance(entries[0], dict):
-        return entries[0].get("id")
-    return None

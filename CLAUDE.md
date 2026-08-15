@@ -64,16 +64,24 @@ transport (`whatsapp/app.py`, `signature.py`, `payloads.py`) → product logic
   (`whatsapp/payment_handler.py`). Selected by `HANDLER` in `.env` and
   dispatched in `_build_inner`. **New behaviour means a new handler, never an `if` in
   the webhook route.** The transport layer was written once and should not be reopened.
-  `build_handler` wraps whatever it returns in `GuardedHandler`, so authorisation
-  cannot be forgotten — tests assert every handler comes back wrapped.
+  **There is no access guard.** `build_handler` returns the handler directly (wrapped
+  only in `GroupHandler` when groups are enabled) — every number that reaches this
+  server is answered, payments included. The allowlist/role/`+pay` system
+  (`auth/`) that used to gate this was removed deliberately; see
+  [docs/phase-5-auth.md](docs/phase-5-auth.md) for why and what replaces it.
 
 Two more boundaries worth knowing:
 
-- **`Agent`** (`agent/base.py`) — the WhatsApp layer never imports an LLM SDK. Two
-  implementations: `ClaudeAgent` and `NemotronAgent` (NVIDIA NIM), chosen by
-  `AGENT_PROVIDER`. Separate classes, not one with a flag — the wire formats differ
-  (tool-arg parsing, tool-result shape, `temperature` vs `effort`). Both reuse the
-  same prompt, tools, and conversation store.
+- **`Agent`** (`agent/base.py`) — the WhatsApp layer never imports an LLM SDK. Three
+  providers, chosen by `AGENT_PROVIDER`: `ClaudeAgent`, plus `NemotronAgent` (NVIDIA
+  NIM) and `GeminiAgent` (Google), which are four-line subclasses of
+  `OpenAICompatibleAgent` — it holds the tool loop, they answer only "which key,
+  which URL, which model". Claude is separate, not one class with a flag, because
+  its wire format genuinely differs (tool-arg parsing, tool-result shape,
+  `temperature` vs `effort`). All reuse the same prompt, tools, and conversation
+  store. **Gemini's free tier lets Google read the traffic** — payee numbers, UPI
+  IDs and amounts — so it is a development/demo option, not a default for real
+  transfers; see `agent/gemini_agent.py`.
 - **`CampaignDataSource`** (`agent/datasource.py`) — **the file to change when eko
   API access arrives.** Currently backed by `StubCampaignSource`, which returns
   deterministic fake data. It is deliberately read-only: no `send`/`create`/`update`
@@ -148,11 +156,11 @@ These are not style preferences — breaking them causes real failures:
   the tool-turn budget burns out. This has happened.
 - **Never trust the model to format for WhatsApp.** `agent/formatting.py` rewrites
   markdown on every reply — prompting alone was observed to leak `**bold**`.
-- **More than one worker needs `REDIS_URL`.** Deduplication, pending transfers and
-  rate limits live in `store.py`; without Redis they are per-process, so N workers
-  means duplicate replies, a spoken PIN that finds no transfer waiting, and an
-  effective rate limit of `limit × N`. `guard_worker_count` refuses that combination
-  at startup — do not remove it, the silent version is very hard to diagnose.
+- **More than one worker needs `REDIS_URL`.** Deduplication and pending transfers
+  live in `store.py`; without Redis they are per-process, so N workers means
+  duplicate replies and a spoken PIN that finds no transfer waiting.
+  `guard_worker_count` refuses that combination at startup — do not remove it,
+  the silent version is very hard to diagnose.
 - **Never write `x = arg or Default()` for a collaborator that defines `__len__`.**
   An empty `MemoryStore` is falsy, so `store or MemoryStore()` silently discarded the
   shared store and gave every worker its own. Use `arg if arg is not None else …`.

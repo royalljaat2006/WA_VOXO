@@ -109,9 +109,10 @@ need §2.
 
 In **Development mode**, add every test number under
 **WhatsApp → API Setup → "To" → Manage phone number list** and confirm the code
-WhatsApp sends. This is Meta's list and is completely separate from this
-project's own `WHATSAPP_ALLOWED_NUMBERS` / allowlist file — a number can pass one
-and be rejected by the other.
+WhatsApp sends. This is Meta's own list, gating who Meta will even deliver a
+message to in Development mode — the project has no allowlist of its own
+anymore (see [phase-5-auth.md](phase-5-auth.md)), so once a number clears
+Meta's list it reaches every handler unconditionally.
 
 ---
 

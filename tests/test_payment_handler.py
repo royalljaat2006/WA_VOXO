@@ -331,6 +331,44 @@ class TestUnclearRecording:
         handler.handle(audio_message())
         assert len(agent.asked) == 1
 
+    def test_a_low_yield_fragment_is_not_echoed_while_awaiting_a_pin(
+        self, gateway, pending, tmp_path
+    ):
+        """The "sirf itna suna: '...'" reply runs before `_on_transcript` —
+        before PaymentFlow ever sees the message — so a spoken PIN that
+        happened to transcribe short (quiet, quick, background noise, which
+        is exactly what "low yield" means) would otherwise be read straight
+        back to the user in the reply itself. Same protection as
+        TestPinIsNotEchoed, for this earlier code path."""
+        from .fakes import make_opus_bytes
+
+        client = FakeClient(media=make_opus_bytes(tmp_path, seconds=8.0))
+        handler = PaymentHandler(
+            client, FakeTranscriber("1234"), FakeAgent(), gateway, pending,
+            PaymentSettings(enabled=True, stub_pin="1234"),
+        )
+        open_intent(gateway, pending)
+        handler.handle(audio_message())
+
+        assert "1234" not in client.last_reply
+        assert "dobara" in client.last_reply.lower()
+
+    def test_a_low_yield_fragment_is_still_echoed_when_nothing_is_pending(
+        self, gateway, pending, tmp_path
+    ):
+        """The suppression is specific to the PIN window — an ordinary
+        unclear recording should still show the user what was heard."""
+        from .fakes import make_opus_bytes
+
+        client = FakeClient(media=make_opus_bytes(tmp_path, seconds=8.0))
+        handler = PaymentHandler(
+            client, FakeTranscriber("do"), FakeAgent(), gateway, pending,
+            PaymentSettings(enabled=True),
+        )
+        handler.handle(audio_message())
+
+        assert "do" in client.last_reply
+
 
 class TestFailurePaths:
     def test_every_path_replies_with_something(self, gateway, pending):

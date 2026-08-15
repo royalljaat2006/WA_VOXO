@@ -169,20 +169,17 @@ allowed to blank the page.
 
 ## Who may pay
 
-Reading a report and sending money are **different powers on different axes**, not
-two rungs of one ladder. `Role` (viewer/analyst/admin) decides what you may see and
-is entirely read-only. Sending requires an explicit `+pay` suffix in the allowlist:
+**Anyone who can message this WhatsApp number.** There used to be a `Role`
+(viewer/analyst/admin) plus an explicit `+pay` allowlist suffix gating this —
+that whole system (`auth/`) was removed deliberately; see
+[phase-5-auth.md](phase-5-auth.md). There is currently no identity check
+between "found the number" and "can attempt a transfer."
 
-```
-WHATSAPP_ALLOWED_NUMBERS=919876543210:admin+pay,919000000001:viewer
-```
-
-A plain `admin` sees everything and still cannot send a rupee. The suffix is
-deliberately ugly — nobody adds it by accident, and a mistyped role still fails
-loudly rather than silently granting anything.
-
-The number never authorises the transfer on its own; a PIN does. This decides who
-is allowed to *try*.
+The number never authorises the transfer on its own; a PIN does. Every payment
+draws from the one eko account fixed in `.env` (`EKO_CUSTOMER_ID` /
+`EKO_INITIATOR_ID` / `EKO_USER_CODE`), so this is the real exposure: without an
+allowlist, anyone who finds the number can try that account, up to the amount
+caps below, by guessing or knowing a PIN.
 
 ## eko's real API
 
@@ -396,8 +393,29 @@ Measured on this flow, three runs each, same prompt and tools:
 | `llama-3.3-nemotron-super-49b-v1.5` | ~58s | 3/3 |
 | `nemotron-3-nano-30b-a3b` | 6.2s | **0/3** — leaks its reasoning into the reply and skips `prepare_transfer` |
 
-Super and Ultra are equally correct here; Super is roughly 3× faster. Switching is
-one line: `NEMOTRON_MODEL=nvidia/nemotron-3-super-120b-a12b`.
+> ⚠️ **These numbers no longer hold, and one of these models is now unusable.**
+> Re-measured later from the rack server: `nemotron-3-ultra-550b-a55b` — the
+> default at the time — **stopped answering entirely**. It is still listed in
+> NIM's `/v1/models`, but every `/chat/completions` call hangs until the client
+> gives up. Nothing errors, so the symptom is a silent bot: the SDK retries
+> three times at 60s each, the user waits three minutes, and the log finally
+> says `Agent failed … APITimeoutError`.
+>
+> Latest measurement, same probe, one run each:
+>
+> | Model | Time | Tool call |
+> |---|---|---|
+> | `nemotron-3-ultra-550b-a55b` | 70s+ | ❌ never responds |
+> | `nemotron-3-super-120b-a12b` | 32.5s | ✅ |
+> | `llama-3.3-nemotron-super-49b-v1.5` | 16.3s | ✅ ← **current default** |
+> | `llama-3.1-nemotron-70b-instruct` | — | ❌ 404, withdrawn |
+> | `nemotron-3-nano-30b-a3b` | 3.1s | ⚠️ malformed arguments (`…@upi\n</parameter`) |
+>
+> The ordering inverted completely, so **re-measure rather than trusting either
+> table.** A hosted model's availability and speed are not properties of this
+> codebase, and both have already changed once under it.
+
+Switching is one line, e.g. `NEMOTRON_MODEL=nvidia/nemotron-3-super-120b-a12b`.
 
 ## Testing it
 

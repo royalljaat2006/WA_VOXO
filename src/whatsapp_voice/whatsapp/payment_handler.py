@@ -62,9 +62,10 @@ class PaymentHandler(AgentHandler):
         contacts: ContactBook | None = None,
         audit: AuditTrail | None = None,
         echo_transcript: bool = True,
+        settlements: object = None,
     ) -> None:
         super().__init__(client, transcriber, agent, echo_transcript)
-        self._flow = PaymentFlow(gateway, pending, settings, audit)
+        self._flow = PaymentFlow(gateway, pending, settings, audit, settlements)
         self._contacts = contacts if contacts is not None else ContactBook()
 
     # ------------------------------------------------------------- routing
@@ -148,6 +149,24 @@ class PaymentHandler(AgentHandler):
             )
             return
         super()._log_transcript(message, result)
+
+    def _low_yield_reply(self, message: AudioMessage, text: str) -> str:
+        """Never echo a partial transcript back to the user while a PIN could
+        be mid-flight.
+
+        This runs from `_handle_audio`, *before* `_on_transcript`/`_route` —
+        the only point in the whole flow that decides whether `text` is a
+        PIN — ever sees this message. Without this override, a spoken PIN
+        that happened to transcribe short (quiet, quick, background noise —
+        exactly what "low yield" means) would be read straight back to the
+        user in the reply itself: "sirf itna suna: '1234'". Same reasoning as
+        `_log_transcript`, applied to an outgoing message instead of a log
+        line — the check is on the window, not on whether this specific
+        fragment looks PIN-shaped.
+        """
+        if self._flow.awaiting_pin(message.from_number):
+            return "Awaaz saaf nahi aayi. Thoda dobara boliye?"
+        return super()._low_yield_reply(message, text)
 
     def _route(self, message: IncomingMessage, text: str, language: str | None) -> None:
         # The individual sender, never the group — money comes out of a person's

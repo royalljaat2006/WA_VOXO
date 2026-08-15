@@ -7,9 +7,6 @@ never changes again) and the product logic (which changes every phase):
     Phase 3  TranscribeHandler    — voice note in, transcript out
     Phase 4  AgentHandler         — transcript → internal API → answer
 
-Phase 5 adds `GuardedHandler`, which wraps any of the above with an authorisation
-check rather than each one growing its own.
-
 Swapping phases means passing a different handler to `create_app`, not editing
 the server.
 """
@@ -24,8 +21,6 @@ from pathlib import Path
 
 from .. import audio as audio_utils
 from ..agent import Agent, AgentError
-from ..auth import AccessGuard
-from ..auth.policy import current_caller
 from ..stt import Transcriber, TranscriptionError
 from ..stt.base import Transcript, is_low_yield
 from .client import WhatsAppClient, WhatsAppError
@@ -161,14 +156,21 @@ class TranscribeHandler(MessageHandler):
                 "Low-yield transcript for %s: %d chars from %.1fs",
                 message.message_id, len(result.text), duration_s,
             )
-            self._reply(
-                message,
-                "Awaaz saaf nahi aayi — sirf itna suna: "
-                f"“{result.text}”. Thoda dobara boliye?",
-            )
+            self._reply(message, self._low_yield_reply(message, result.text))
             return
 
         self._on_transcript(message, result.text, result.language)
+
+    def _low_yield_reply(self, message: AudioMessage, text: str) -> str:
+        """The reply when a recording produced far less text than its length
+        implies. Overridable: this runs before `_on_transcript`, so a
+        payment-aware subclass has not yet had a chance to decide whether
+        `message` might be a PIN — `PaymentHandler` overrides this to
+        withhold `text` while a PIN could be mid-flight, the same reasoning
+        as `_log_transcript`, applied to an outgoing reply instead of a log
+        line.
+        """
+        return f"Awaaz saaf nahi aayi — sirf itna suna: “{text}”. Thoda dobara boliye?"
 
     def _on_transcript(
         self, message: AudioMessage, transcript: str, language: str | None = None
@@ -310,51 +312,3 @@ class AgentHandler(TranscribeHandler):
             " [refused]" if reply.refused else "",
         )
         self._reply(message, f"{prefix}{reply.text}")
-
-
-class GuardedHandler(MessageHandler):
-    """Wraps any handler with an authorisation check.
-
-    A wrapper rather than a check inside each handler: auth then applies
-    identically to echo, transcribe and agent, cannot be forgotten when a new
-    handler is written, and there is exactly one place to audit.
-
-    Denied messages get a reply and go no further — no media download, no
-    transcription, no model call. Cost and data exposure both stop at the gate.
-    """
-
-    def __init__(self, inner: MessageHandler, guard: AccessGuard,
-                 client: WhatsAppClient) -> None:
-        self._inner = inner
-        self._guard = guard
-        self._client = client
-
-    @property
-    def inner(self) -> MessageHandler:
-        """The wrapped handler. Public so callers can report which behaviour is
-        running without unwrapping a private attribute."""
-        return self._inner
-
-    def warmup(self) -> None:
-        self._inner.warmup()
-
-    def handle(self, message: IncomingMessage) -> None:
-        result = self._guard.check(message.from_number)
-
-        if not result.allowed:
-            logger.info("Blocked %s: %s", message.message_id, result.decision.value)
-            if result.message:
-                self._send(message.from_number, result.message)
-            return
-
-        # Published here, at the one point a verified caller is known, so code
-        # too far down to be handed a Caller — the payment tools — can still ask
-        # whether this person is permitted to move money.
-        current_caller.set(result.caller)
-        self._inner.handle(message)
-
-    def _send(self, to: str, text: str) -> None:
-        try:
-            self._client.send_text(to, text)
-        except WhatsAppError:
-            logger.warning("Could not deliver denial notice to %s", to)

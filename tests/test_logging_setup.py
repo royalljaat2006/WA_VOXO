@@ -120,15 +120,18 @@ class TestJsonFormatter:
 
 
 class TestConfigure:
-    def test_installs_a_single_handler(self):
+    def test_installs_stdout_and_ring_buffer_handlers(self):
         logging_setup.configure()
-        assert len(logging.getLogger().handlers) == 1
+        handlers = logging.getLogger().handlers
+        assert len(handlers) == 2
+        assert isinstance(handlers[0], logging.StreamHandler)
+        assert isinstance(handlers[1], logging_setup.RingBufferHandler)
 
     def test_is_idempotent(self):
         """A reload must not double every log line."""
         logging_setup.configure()
         logging_setup.configure()
-        assert len(logging.getLogger().handlers) == 1
+        assert len(logging.getLogger().handlers) == 2
 
     def test_json_format_selected(self):
         logging_setup.configure(fmt="json")
@@ -145,3 +148,61 @@ class TestConfigure:
         """httpx logs full signed media URLs at INFO — not useful, not retainable."""
         logging_setup.configure()
         assert logging.getLogger("httpx").level == logging.WARNING
+
+    def test_ring_buffer_is_reachable_after_configure(self):
+        logging_setup.configure()
+        assert logging_setup.get_ring_buffer() is not None
+
+    def test_ring_buffer_is_none_before_configure(self, monkeypatch):
+        monkeypatch.setattr(logging_setup, "_ring_buffer", None)
+        assert logging_setup.get_ring_buffer() is None
+
+
+class TestRingBufferHandler:
+    def test_captures_a_record(self):
+        handler = logging_setup.RingBufferHandler()
+        logger = logging.getLogger("test.ringbuffer")
+        logger.addHandler(handler)
+        logger.propagate = False
+        logger.setLevel(logging.INFO)
+        try:
+            logger.info("hello %s", "world")
+        finally:
+            logger.removeHandler(handler)
+            # Otherwise this persists on the cached logger object for the rest
+            # of the test session and silently swallows records from any test
+            # that logs through a "test.ringbuffer.*" child logger later on.
+            logger.propagate = True
+
+        [entry] = handler.snapshot()
+        assert entry["message"] == "hello world"
+        assert entry["level"] == "INFO"
+        assert entry["logger"] == "test.ringbuffer"
+        assert "time" in entry
+
+    def test_oldest_entries_drop_once_full(self):
+        handler = logging_setup.RingBufferHandler(maxlen=3)
+        logger = logging.getLogger("test.ringbuffer.bounded")
+        logger.addHandler(handler)
+        logger.propagate = False
+        logger.setLevel(logging.INFO)
+        try:
+            for i in range(5):
+                logger.info("line %d", i)
+        finally:
+            logger.removeHandler(handler)
+            logger.propagate = True
+
+        messages = [e["message"] for e in handler.snapshot()]
+        assert messages == ["line 2", "line 3", "line 4"]
+
+    def test_redaction_from_the_stdout_handler_carries_over(self):
+        """Handlers on one logger share a LogRecord — the stdout handler's
+        RedactingFilter (added first, in configure()) must already have
+        mutated record.msg by the time this handler's emit() runs."""
+        logging_setup.configure()
+        logger = logging.getLogger("test.ringbuffer.redaction")
+        logger.info("Denied %s", "919876543210")
+
+        entries = logging_setup.get_ring_buffer().snapshot()
+        assert "919876543210" not in entries[-1]["message"]

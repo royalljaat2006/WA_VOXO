@@ -11,7 +11,6 @@ from fastapi.testclient import TestClient
 from whatsapp_voice.agent.base import AgentError
 from whatsapp_voice.config import (
     AgentSettings,
-    AuthSettings,
     DemoSettings,
     Settings,
     SttSettings,
@@ -29,7 +28,6 @@ def build(demo=None, agent=None, transcriber=None):
         whatsapp=WhatsAppSettings(access_token="tok", phone_number_id="123"),
         stt=SttSettings(whisper_model="tiny"),
         agent=AgentSettings(api_key="sk-test"),
-        auth=AuthSettings(allowed_numbers="919876543210:admin"),
         demo=demo or DemoSettings(enabled=True),
         handler="agent",
     )

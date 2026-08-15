@@ -140,8 +140,8 @@ curl -s "localhost:8000/demo/audit?limit=10" | python3 -m json.tool
 
 `start_tunnel.py` performs Meta's verification handshake itself before printing
 anything to paste into the dashboard, and warns about whatever is still unset.
-Then in `.env`: `AUTH_ENABLED=true` and
-`WHATSAPP_ALLOWED_NUMBERS=<your number>:admin+pay`.
+**There is no allowlist** — every number that finds the public URL is answered,
+payments included. See [phase-5-auth.md](docs/phase-5-auth.md).
 
 ```bash
 .venv/bin/python tools/send_hello.py 91XXXXXXXXXX   # prove outbound works first
@@ -182,8 +182,6 @@ PAYMENTS_ENABLED=true       # separate on purpose — money needs opting in
 PAYMENT_GATEWAY=stub        # 'eko' moves real money; leave it alone
 PAYMENT_AUDIT_PATH=data/audit/payments.jsonl
 SARVAM_LANG=unknown         # auto-detect, so a Tamil speaker gets Tamil back
-AUTH_ENABLED=true
-WHATSAPP_ALLOWED_NUMBERS=919876543210:admin+pay
 GROUPS_ENABLED=false        # needs an Official Business Account
 WEB_CONCURRENCY=1           # more than one worker requires REDIS_URL
 ```
@@ -200,7 +198,6 @@ Every setting is documented in [`.env.example`](.env.example) with the reasoning
 | `src/whatsapp_voice/stt/` | Speech engines behind one `Transcriber` interface |
 | `src/whatsapp_voice/whatsapp/` | Cloud API client, webhook server, swappable `MessageHandler` |
 | `src/whatsapp_voice/agent/` | LLM agent, tools, and the `CampaignDataSource` / `PaymentGateway` boundaries |
-| `src/whatsapp_voice/auth/` | Allowlist, roles, the `+pay` capability, rate limiting |
 | `src/whatsapp_voice/audit.py` | Append-only record of every attempt to move money |
 | `src/whatsapp_voice/store.py` | Shared state, so more than one worker is safe |
 | `src/whatsapp_voice/agent/handoff.py` | Authorising in the payer's own app — the production alternative to a spoken PIN |
@@ -228,7 +225,7 @@ Every setting is documented in [`.env.example`](.env.example) with the reasoning
 | 2 | [Webhook server](docs/phase-2-webhook.md) | Tunnel, Meta webhook config, echo test |
 | 3 | [Voice pipeline](docs/phase-3-voice.md) | Voice note in, transcript out |
 | 4 | [The agent](docs/phase-4-agent.md) | Model choice, tools, plugging in the real API |
-| 5 | [Authorisation](docs/phase-5-auth.md) | Threat model, allowlist, rate limits |
+| 5 | [Authorisation (removed)](docs/phase-5-auth.md) | What existed, why it was removed, what that means now |
 | 6 | [Deployment](docs/phase-6-deploy.md) | Container, hosting, worker count |
 
 ---

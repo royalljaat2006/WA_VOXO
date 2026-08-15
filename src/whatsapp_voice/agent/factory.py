@@ -12,6 +12,7 @@ from pathlib import Path
 
 from ..audit import AuditTrail
 from ..config import AgentSettings, EkoSettings, PaymentSettings
+from ..store import KeyValueStore
 from .base import Agent
 from .campaign_tools import campaign_tools
 from .claude_agent import SYSTEM_PROMPT, ClaudeAgent
@@ -122,7 +123,7 @@ def build_agent(
                 "Payments are enabled but no gateway/pending store was passed. "
                 "Use build_payment_stack() rather than calling build_agent() directly."
             )
-        tool_list += payment_tools(gateway, pending, payments, contacts, audit)
+        tool_list += payment_tools(gateway, pending, payments, audit)
         prompt += PAYMENT_PROMPT
 
     tools = ToolRegistry(tool_list)
@@ -143,9 +144,27 @@ def build_agent(
                     settings.nemotron_model, settings.temperature, len(tools))
         return NemotronAgent(settings, tools, conversations, system_prompt=prompt)
 
+    if settings.provider == "gemini":
+        from .gemini_agent import GeminiAgent
+
+        logger.info("Agent: gemini model=%s temperature=%s tools=%d",
+                    settings.gemini_model, settings.temperature, len(tools))
+        # Warned every start, not once at setup: the free tier's terms let
+        # Google read this traffic, and on this deployment that traffic is
+        # payee numbers, UPI IDs and amounts. See agent/gemini_agent.py.
+        if payments and payments.moves_real_money:
+            logger.warning(
+                "AGENT_PROVIDER=gemini with a real payment gateway — if this key "
+                "is on the unpaid tier, Google may use these prompts to improve "
+                "its products and human reviewers may read them. Payee numbers, "
+                "UPI IDs and amounts are in them. (The PIN is not — the gate "
+                "runs in front of the agent.) https://ai.google.dev/gemini-api/terms"
+            )
+        return GeminiAgent(settings, tools, conversations, system_prompt=prompt)
+
     raise ValueError(
         f"Unknown AGENT_PROVIDER={settings.provider!r}. "
-        "Valid values: 'claude', 'nemotron'."
+        "Valid values: 'claude', 'nemotron', 'gemini'."
     )
 
 
@@ -153,6 +172,7 @@ def build_payment_stack(
     agent_settings: AgentSettings,
     payment_settings: PaymentSettings,
     eko: EkoSettings | None = None,
+    store: KeyValueStore | None = None,
 ) -> tuple[Agent, PaymentGateway, PendingIntents, ContactBook, AuditTrail]:
     """Agent, gateway, pending-intent store and contact book, sharing instances.
 
@@ -160,10 +180,16 @@ def build_payment_stack(
     handler reads, or an intent the model prepares is invisible when the PIN
     arrives — and the same `ContactBook` the handler fills, or a shared contact
     is indistinguishable from a dictated number by the time it is resolved.
+
+    `store` makes `PendingIntents` shared across workers — without it (`None`),
+    `PendingIntents` falls back to an in-process `MemoryStore`, correct for one
+    worker and silently wrong for several: a PIN prepared on worker A is
+    invisible to worker B. Always pass the real store in production; `None`
+    exists for call sites (tests, the demo path) that only ever run one worker.
     """
     gateway = build_gateway(payment_settings, eko)
     audit = build_audit_trail(payment_settings)
-    pending = PendingIntents()
+    pending = PendingIntents(store)
     contacts = ContactBook()
     agent = build_agent(
         agent_settings, payment_settings, gateway, pending, contacts, audit, eko

@@ -4,200 +4,34 @@ A sibling of `ClaudeAgent`, not a replacement. Both implement `Agent`, so the
 WhatsApp and demo layers cannot tell them apart, and both reuse the same
 `SYSTEM_PROMPT`, the same `ToolRegistry`, and the same `ConversationStore`.
 
-What could NOT be shared is the wire format, and the differences are not cosmetic:
+The tool loop and the wire-format notes live in `openai_compatible.py`, shared
+with `GeminiAgent`. Only the three values below are NVIDIA-specific.
 
-| | Anthropic | NVIDIA (OpenAI-compatible) |
-|---|---|---|
-| System prompt | separate `system` field | first message in the list |
-| Tool schema | flat `{name, …, input_schema}` | nested under `{"type":"function", …}` |
-| Tool args | parsed dict | **JSON string** to parse |
-| Tool results | ALL in one `user` message | one `tool` message **per call** |
-| Sampling | `temperature` rejected | `temperature` accepted |
-
-Getting the tool-result shape wrong is the subtle one: Anthropic wants a single
-user message carrying every result, OpenAI wants one message per `tool_call_id`.
-Sending Anthropic's shape here silently loses results.
+⚠️ **A model being listed in NIM's `/v1/models` does not mean it answers.**
+`nemotron-3-ultra-550b-a55b` was the default here until it stopped responding
+entirely — still catalogued, but every request hangs until the client gives up.
+Nothing errors, so the symptom is a silent bot. See the model table in
+`docs/voice-payments.md`, and re-measure rather than trusting it.
 """
 
 from __future__ import annotations
 
-import json
-import logging
-from typing import Any
-
 from ..config import AgentSettings
-from .base import Agent, AgentError, AgentReply
-from .claude_agent import SYSTEM_PROMPT, system_prompt_for
-from .conversation import ConversationStore
-from .formatting import for_whatsapp
-from .tools import ToolRegistry
-
-logger = logging.getLogger(__name__)
+from .openai_compatible import OpenAICompatibleAgent
 
 
-class NemotronAgent(Agent):
-    def __init__(
-        self,
-        settings: AgentSettings,
-        tools: ToolRegistry,
-        conversations: ConversationStore | None = None,
-        client: Any = None,
-        system_prompt: str = SYSTEM_PROMPT,
-    ) -> None:
-        if not settings.nvidia_api_key and client is None:
-            raise AgentError("NVIDIA_API_KEY is not set — see docs/phase-4-agent.md")
-        self._settings = settings
-        self._tools = tools
-        self._conversations = conversations or ConversationStore(
-            max_turns=settings.max_history_turns,
-            idle_timeout_s=settings.conversation_idle_timeout_s,
-        )
-        self._system_prompt = system_prompt
-        self._client = client
-
-    @property
-    def client(self) -> Any:
-        if self._client is None:
-            # The OpenAI SDK speaks NIM's dialect natively — only base_url differs.
-            from openai import OpenAI
-
-            self._client = OpenAI(
-                api_key=self._settings.nvidia_api_key,
-                base_url=self._settings.nvidia_base_url,
-                timeout=self._settings.request_timeout_s,
-            )
-        return self._client
-
-    def warmup(self) -> None:
-        _ = self.client  # surface a bad key at startup, not mid-conversation
-
-    # ------------------------------------------------------------------ main
-
-    def answer(
-        self, conversation_id: str, message: str, language: str | None = None
-    ) -> AgentReply:
-        thread = self._conversations.get(conversation_id)
-        thread.append("user", message)
-
-        tools_used: list[str] = []
-        input_tokens = output_tokens = 0
-
-        for turn in range(self._settings.max_tool_turns):
-            response = self._call_model(conversation_id, language)
-
-            usage = getattr(response, "usage", None)
-            if usage:
-                input_tokens += usage.prompt_tokens or 0
-                output_tokens += usage.completion_tokens or 0
-
-            choice = response.choices[0]
-            reply_message = choice.message
-            calls = list(getattr(reply_message, "tool_calls", None) or [])
-
-            # Echo the assistant turn back in the shape the API expects on the
-            # next request — tool_calls included, or it has no record of what it
-            # asked for.
-            thread.append(
-                "assistant",
-                reply_message.content or "",
-                extra={
-                    "tool_calls": [
-                        {
-                            "id": c.id,
-                            "type": "function",
-                            "function": {
-                                "name": c.function.name,
-                                "arguments": c.function.arguments,
-                            },
-                        }
-                        for c in calls
-                    ]
-                }
-                if calls
-                else None,
-            )
-
-            if not calls:
-                return AgentReply(
-                    text=for_whatsapp(reply_message.content or "")
-                    or "I don't have an answer for that.",
-                    tools_used=tuple(tools_used),
-                    input_tokens=input_tokens,
-                    output_tokens=output_tokens,
-                )
-
-            for call in calls:
-                tools_used.append(call.function.name)
-                arguments, parse_error = self._parse_arguments(call.function.arguments)
-
-                if parse_error:
-                    output, is_error = parse_error, True
-                else:
-                    output, is_error = self._tools.run(call.function.name, arguments)
-
-                logger.info(
-                    "Tool %s → %s%s",
-                    call.function.name, output[:200], " [error]" if is_error else "",
-                )
-                # One `tool` message per call — NOT all results in one message.
-                thread.messages.append(
-                    {"role": "tool", "tool_call_id": call.id, "content": output}
-                )
-
-            logger.debug("Turn %d used tools: %s", turn + 1,
-                         [c.function.name for c in calls])
-
-        logger.error("Hit max_tool_turns (%d) for %s",
-                     self._settings.max_tool_turns, conversation_id)
-        return AgentReply(
-            text="That took more steps than I could complete. Could you ask it more simply?",
-            tools_used=tuple(tools_used),
-            input_tokens=input_tokens,
-            output_tokens=output_tokens,
-        )
-
-    # ------------------------------------------------------------- internals
+class NemotronAgent(OpenAICompatibleAgent):
+    key_setting_name = "NVIDIA_API_KEY"
+    setup_doc = "docs/phase-4-agent.md"
 
     @staticmethod
-    def _parse_arguments(raw: str) -> tuple[dict[str, Any], str | None]:
-        """Tool arguments arrive as a JSON *string* here, unlike Anthropic.
+    def api_key_from(settings: AgentSettings) -> str | None:
+        return settings.nvidia_api_key
 
-        A malformed one is the model's mistake to correct, so it comes back as a
-        readable tool error rather than crashing the turn.
-        """
-        try:
-            parsed = json.loads(raw or "{}")
-        except json.JSONDecodeError as exc:
-            return {}, f"Your tool arguments were not valid JSON ({exc}). Try again."
-        if not isinstance(parsed, dict):
-            return {}, "Tool arguments must be a JSON object."
-        return parsed, None
+    @staticmethod
+    def base_url_from(settings: AgentSettings) -> str:
+        return settings.nvidia_base_url
 
-    def _call_model(self, conversation_id: str, language: str | None = None) -> Any:
-        messages = [
-            {"role": "system", "content": system_prompt_for(
-                base=self._system_prompt, language=language
-            )},
-            *self._conversations.history_for_request(conversation_id),
-        ]
-
-        request: dict[str, Any] = {
-            "model": self._settings.nemotron_model,
-            "max_tokens": self._settings.max_tokens,
-            "temperature": self._settings.temperature,
-            "messages": messages,
-        }
-        if len(self._tools):
-            request["tools"] = [
-                {"type": "function", "function": {
-                    "name": definition["name"],
-                    "description": definition["description"],
-                    "parameters": definition["input_schema"],
-                }}
-                for definition in self._tools.definitions()
-            ]
-
-        try:
-            return self.client.chat.completions.create(**request)
-        except Exception as exc:  # noqa: BLE001 - SDK raises a family of types
-            raise AgentError(f"{type(exc).__name__}: {exc}") from exc
+    @staticmethod
+    def model_from(settings: AgentSettings) -> str:
+        return settings.nemotron_model

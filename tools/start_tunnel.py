@@ -219,16 +219,10 @@ def _print_meta_instructions(url: str, settings: Settings) -> None:
             "signature-verified. Fine for a first test on a URL nobody knows; "
             "set it before this is public for any length of time."
         )
-    if not settings.auth.enabled:
-        warnings.append(
-            "AUTH_ENABLED=false — every number that reaches this server is "
-            "answered, and this URL is now public."
-        )
-    elif not settings.auth.allowed_numbers:
-        warnings.append(
-            "The allowlist is empty, so every request will be denied. Set "
-            "WHATSAPP_ALLOWED_NUMBERS=<your number>:admin+pay"
-        )
+    warnings.append(
+        "NO ACCESS CONTROL — every number that reaches this server is "
+        "answered, and this URL is now public."
+    )
     if settings.payments.enabled and settings.payments.moves_real_money:
         warnings.append("PAYMENT_GATEWAY moves REAL MONEY on a public URL.")
 

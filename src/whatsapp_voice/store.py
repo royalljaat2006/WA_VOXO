@@ -1,23 +1,29 @@
 """Where per-conversation state lives, and why it cannot be a dict.
 
-Six things in this codebase remember something between messages: seen message
-ids, pending transfers, shared contacts, group wakefulness, conversation history
-and rate-limit counters. Every one of them is a dict on an object today, which is
-correct for one process and wrong for two.
+Five things in this codebase remember something between messages: seen message
+ids, pending transfers, settlements awaiting eko's answer, shared contacts,
+group wakefulness and conversation history. A dict on an object is correct for
+one process and wrong for two.
 
-The failures are not equally bad, and that ordering decides what gets migrated:
+The failures are not equally bad, and that ordering decided what got migrated
+first:
 
-    PendingIntents   worker A prepares the transfer, worker B gets the PIN and
-                     finds nothing pending. The payment simply does not work.
-    SeenMessages     Meta's retry lands on a different worker, which has never
-                     seen the id. The user gets two replies to one voice note.
-    rate limits      each worker counts separately, so the real limit is N times
-                     the configured one.
-    ─────────────── everything below degrades rather than breaks ───────────────
-    ContactBook      a shared contact is not recognised, so the digits get read
-                     back unnecessarily. Annoying, and safe.
-    GroupRegistry    a woken group looks dormant to another worker.
-    Conversations    a follow-up loses its thread.
+    PendingIntents    worker A prepares the transfer, worker B gets the PIN and
+                      finds nothing pending. The payment simply does not work.
+                      Store-backed — see `agent/payments.py::PendingIntents`.
+    SettlementQueue   a transfer eko accepted is never followed up on if the
+                      worker tracking it restarts. Store-backed — see
+                      `agent/settlement.py`.
+    SeenMessages      Meta's retry lands on a different worker, which has never
+                      seen the id. The user gets two replies to one voice note.
+                      Store-backed — see `whatsapp/app.py`.
+    ─────────────── everything below degrades rather than breaks, and is
+                     still plain in-process state ───────────────
+    ContactBook       a shared contact is not recognised, so the digits get
+                      read back unnecessarily. Annoying, and safe.
+    GroupRegistry     a woken group looks dormant to another worker.
+    Conversations     a follow-up loses its thread. Noted in
+                      docs/phase-6-deploy.md as a deployment prerequisite.
 
 So `KeyValueStore` is a small interface over exactly what those need — get, set
 with a TTL, delete, and an atomic "claim this id" for deduplication. Not a cache
@@ -193,19 +199,18 @@ def guard_worker_count(workers: int, store: KeyValueStore) -> None:
     """Refuse to run several workers on per-process state.
 
     Without this the failure is silent and confusing: the bot replies twice to
-    some messages, loses PINs on others, and enforces a rate limit N times
-    higher than configured — all while every health check passes. Failing at
-    startup with the reason is strictly better than being debugged in production.
+    some messages and loses PINs on others, all while every health check
+    passes. Failing at startup with the reason is strictly better than being
+    debugged in production.
     """
     if workers <= 1 or isinstance(store, RedisStore):
         return
 
     raise RuntimeError(
         f"WEB_CONCURRENCY={workers} but no REDIS_URL is set.\n"
-        "Deduplication, pending transfers and rate limits are per-process, so "
-        "with several workers a voice note gets two replies, a spoken PIN finds "
-        "no transfer waiting, and the rate limit is effectively multiplied by "
-        f"{workers}.\n"
+        "Deduplication and pending transfers are per-process without it, so "
+        "with several workers a voice note gets two replies and a spoken PIN "
+        "finds no transfer waiting.\n"
         "Set REDIS_URL, or run one worker."
     )
 

@@ -112,7 +112,7 @@ def build_handoff(
         payload="",
         display_text=(
             f"₹{_rupees(intent.amount_paise)} → {intent.payee.display}\n"
-            "Confirm karne ke liye apna PIN boliye."
+            "Confirm karne ke liye apna PINTWIN boliye."
         ),
     )
 

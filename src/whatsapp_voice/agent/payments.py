@@ -31,6 +31,7 @@ reporting. Swapping in the real gateway is one class plus one branch in
 from __future__ import annotations
 
 import hmac
+import json
 import logging
 import time
 import uuid
@@ -38,6 +39,9 @@ from contextvars import ContextVar
 from dataclasses import dataclass, field
 from datetime import date
 from enum import StrEnum
+from typing import Any
+
+from ..store import KeyValueStore, MemoryStore
 
 logger = logging.getLogger(__name__)
 
@@ -132,6 +136,9 @@ class TransferIntent:
     payer: str
     payee: Payee
     amount_paise: int
+    #: `time.time()`, not `monotonic` — this has to survive a lookup from a
+    #: different worker process than the one that created it. See
+    #: `PendingSettlement` in `settlement.py` for the same reasoning.
     created_at: float
     expires_at: float
     status: IntentStatus = IntentStatus.AWAITING_PIN
@@ -142,7 +149,12 @@ class TransferIntent:
     reference: str | None = None
 
     def is_expired(self, now: float | None = None) -> bool:
-        return (now or time.monotonic()) > self.expires_at
+        # `now if now is not None else …`, not `now or …` — a caller passing an
+        # actual `0.0` (the Unix epoch) would have it silently discarded by
+        # `or`. Unlikely in practice, but this project has been bitten by
+        # exactly this falsy-value pattern before (see eko_gateway.py's
+        # `_as_text`); not repeating it here that it is cheap to avoid.
+        return (now if now is not None else time.time()) > self.expires_at
 
     def is_open(self, now: float | None = None) -> bool:
         return self.status is IntentStatus.AWAITING_PIN and not self.is_expired(now)
@@ -153,6 +165,19 @@ class TransferResult:
     ok: bool
     reference: str | None = None
     message: str | None = None
+    #: True only when the gateway rejected the *PIN*. Everything else that
+    #: fails — a timeout, a cap, an unparseable response — is `False`.
+    #:
+    #: Carried explicitly because the flow used to treat every failure as a
+    #: wrong PIN, which told users to re-enter a PIN that was already correct
+    #: and hid the real fault. A caller must not infer this from `message`.
+    pin_rejected: bool = False
+    #: Accepted by the gateway but not settled yet — the money may still land
+    #: or reverse. `ok` is False, because a receipt would be a lie, but so
+    #: would "it failed": a real transfer sat in this state and reversed hours
+    #: later. eko's rule is to poll their Transaction Inquiry API until it
+    #: resolves, and explicitly *not* to call it failed before that.
+    pending: bool = False
 
 
 class PaymentGateway:
@@ -165,6 +190,16 @@ class PaymentGateway:
     #: True when this gateway moves no real money. Surfaced on /health and in the
     #: startup banner so a stub can never be mistaken for the real thing.
     is_stub: bool = True
+
+    #: True when `resolve_payee` can actually return a payee's *name*.
+    #:
+    #: Decides whether the model is given a lookup tool at all. Where no name
+    #: can be returned — eko's platform team confirmed their transfer API never
+    #: returns one — a lookup step costs a whole model turn, tells the model
+    #: nothing it did not already have, and adds a place for it to stop before
+    #: preparing the transfer. That is not hypothetical: it is what made a
+    #: spoken PIN arrive with nothing pending.
+    resolves_names: bool = True
 
     def resolve_payee(self, phone: str) -> Payee:
         """Phone number → payee. Raises PaymentError if unusable."""
@@ -253,7 +288,13 @@ class StubPaymentGateway(PaymentGateway):
                 f"Available: {', '.join(known)}"
             )
 
-        entry = _STUB_DIRECTORY.get(number)
+        # Matched on the last 10 digits so a bare mobile number (the VPA-derived
+        # convention) and a 91-prefixed WhatsApp-style number name the same
+        # directory entry.
+        canonical = number[-10:]
+        entry = next(
+            (v for k, v in _STUB_DIRECTORY.items() if k[-10:] == canonical), None
+        )
         if entry is None:
             # An arbitrary number we cannot name. Deliberately still allowed, but
             # unnamed and therefore always is_new. Whether the digits need
@@ -279,7 +320,7 @@ class StubPaymentGateway(PaymentGateway):
     def confirm_and_execute(self, intent: TransferIntent, pin: str) -> TransferResult:
         # Constant-time compare so a wrong PIN cannot be narrowed by timing.
         if not hmac.compare_digest(pin, self._pin):
-            return TransferResult(ok=False, message="PIN galat hai.")
+            return TransferResult(ok=False, pin_rejected=True, message="PIN galat hai.")
 
         self._paid_before.add((intent.payer, intent.payee.phone))
         day, spent = self._spent.get(intent.payer, ("", 0))
@@ -304,7 +345,7 @@ def prepare_intent(
     Shared by every gateway: an intent is our own bookkeeping, identical whether
     the money behind it is real. Only `confirm_and_execute` differs.
     """
-    now = time.monotonic()
+    now = time.time()
     return TransferIntent(
         intent_id=uuid.uuid4().hex[:12],
         payer=payer,
@@ -379,43 +420,157 @@ class ContactBook:
         self._by_payer.pop(payer, None)
 
 
-@dataclass
+#: A spoken PIN has to reach whichever worker prepared the transfer, or a
+#: multi-worker deployment loses it silently — store.py ranks this the worst
+#: of the shared-state gaps this project has ("the payment simply does not
+#: work"). Keys mirror the pattern `SettlementQueue` (settlement.py) already
+#: established: the stores expose get/set/delete but no scan, so an index of
+#: keys is kept alongside the records.
+_PENDING_RECORD_PREFIX = "pending_intent:"
+_PENDING_ID_INDEX_PREFIX = "pending_intent_id:"
+_PENDING_PAYER_INDEX_KEY = "pending_intent_payers"
+#: Generous grace on top of the intent's own TTL — the store eviction is a
+#: memory backstop, not the expiry decision. `is_expired()` is authoritative.
+_PENDING_STORE_GRACE_S = 60.0
+
+
+def _payee_to_jsonable(payee: Payee) -> dict[str, Any]:
+    return {
+        "phone": payee.phone,
+        "vpa": payee.vpa,
+        "resolved_name": payee.resolved_name,
+        "masked_account": payee.masked_account,
+        "is_new": payee.is_new,
+        "source": payee.source.value,
+    }
+
+
+def _payee_from_jsonable(data: dict[str, Any]) -> Payee:
+    return Payee(
+        phone=data["phone"],
+        vpa=data.get("vpa"),
+        resolved_name=data.get("resolved_name"),
+        masked_account=data.get("masked_account"),
+        is_new=data.get("is_new", True),
+        source=PayeeSource(data.get("source", PayeeSource.DICTATED.value)),
+    )
+
+
+def _intent_to_jsonable(intent: TransferIntent) -> dict[str, Any]:
+    return {
+        "intent_id": intent.intent_id,
+        "payer": intent.payer,
+        "payee": _payee_to_jsonable(intent.payee),
+        "amount_paise": intent.amount_paise,
+        "created_at": intent.created_at,
+        "expires_at": intent.expires_at,
+        "status": intent.status.value,
+        "language": intent.language,
+        "attempts": intent.attempts,
+        "reference": intent.reference,
+    }
+
+
+def _intent_from_jsonable(data: dict[str, Any]) -> TransferIntent:
+    return TransferIntent(
+        intent_id=data["intent_id"],
+        payer=data["payer"],
+        payee=_payee_from_jsonable(data["payee"]),
+        amount_paise=data["amount_paise"],
+        created_at=data["created_at"],
+        expires_at=data["expires_at"],
+        status=IntentStatus(data.get("status", IntentStatus.AWAITING_PIN.value)),
+        language=data.get("language"),
+        attempts=data.get("attempts", 0),
+        reference=data.get("reference"),
+    )
+
+
 class PendingIntents:
     """Per-payer pending intents, one at a time.
 
     One per payer on purpose: a second instruction while one is awaiting a PIN
     replaces it, so a stray PIN can never be applied to the wrong transfer.
+
+    Store-backed rather than in-process, for the reason `_PENDING_RECORD_PREFIX`
+    above explains. Mutating a `TransferIntent` returned by `get()` and
+    expecting it to persist **does not work** here — `get()` deserialises a
+    fresh copy every time, unlike the old plain-dict version where it handed
+    back the same object by reference. A caller that mutates one (incrementing
+    `attempts` on a wrong PIN, for instance) must call `put()` again to save
+    it; `agent/payment_flow.py::_confirm` does this explicitly.
     """
 
-    _by_payer: dict[str, TransferIntent] = field(default_factory=dict)
+    def __init__(self, store: KeyValueStore | None = None) -> None:
+        # `store if store is not None else …`, not `store or …` — an explicitly
+        # passed, currently-empty `MemoryStore` defines `__len__` and would be
+        # falsy, so `or` would silently replace it with a different empty one.
+        self._store = store if store is not None else MemoryStore()
 
     def put(self, intent: TransferIntent) -> None:
-        self._by_payer[intent.payer] = intent
+        ttl_s = max(1.0, intent.expires_at - time.time()) + _PENDING_STORE_GRACE_S
+        payload = json.dumps(_intent_to_jsonable(intent))
+        self._store.set(_PENDING_RECORD_PREFIX + intent.payer, payload, ttl_s=ttl_s)
+        self._store.set(_PENDING_ID_INDEX_PREFIX + intent.intent_id, intent.payer, ttl_s=ttl_s)
+        payers = self._payers()
+        if intent.payer not in payers:
+            payers.append(intent.payer)
+            self._store.set(_PENDING_PAYER_INDEX_KEY, json.dumps(payers))
 
     def get(self, payer: str) -> TransferIntent | None:
-        intent = self._by_payer.get(payer)
-        if intent is None:
+        raw = self._store.get(_PENDING_RECORD_PREFIX + payer)
+        if raw is None:
+            return None
+        try:
+            intent = _intent_from_jsonable(json.loads(raw))
+        except (TypeError, ValueError, KeyError):
+            logger.warning("Unreadable pending intent for payer — dropping")
+            self.clear(payer)
             return None
         if intent.is_expired():
-            intent.status = IntentStatus.EXPIRED
-            self._by_payer.pop(payer, None)
+            self.clear(payer)
             return None
         return intent
 
     def clear(self, payer: str) -> None:
-        self._by_payer.pop(payer, None)
+        raw = self._store.get(_PENDING_RECORD_PREFIX + payer)
+        if raw is not None:
+            try:
+                intent_id = json.loads(raw).get("intent_id")
+            except ValueError:
+                intent_id = None
+            if intent_id:
+                self._store.delete(_PENDING_ID_INDEX_PREFIX + intent_id)
+        self._store.delete(_PENDING_RECORD_PREFIX + payer)
+        payers = [p for p in self._payers() if p != payer]
+        self._store.set(_PENDING_PAYER_INDEX_KEY, json.dumps(payers))
 
     def find_by_id(self, intent_id: str) -> TransferIntent | None:
         """The open intent with this id, whoever it belongs to.
 
         A payment callback knows the transfer, not who is waiting for it — so it
         needs this direction of lookup. Expired intents are skipped: a callback
-        arriving after the window has closed resolves nothing.
+        arriving after the window has closed resolves nothing. Also skipped: a
+        payer whose *current* pending intent has since been replaced — the id
+        index can point at a payer without still pointing at that intent.
         """
-        for intent in list(self._by_payer.values()):
-            if intent.intent_id == intent_id and not intent.is_expired():
-                return intent
-        return None
+        payer = self._store.get(_PENDING_ID_INDEX_PREFIX + intent_id)
+        if not payer:
+            return None
+        intent = self.get(payer)
+        if intent is None or intent.intent_id != intent_id:
+            return None
+        return intent
+
+    def _payers(self) -> list[str]:
+        raw = self._store.get(_PENDING_PAYER_INDEX_KEY)
+        if not raw:
+            return []
+        try:
+            payers = json.loads(raw)
+        except ValueError:
+            return []
+        return [str(p) for p in payers] if isinstance(payers, list) else []
 
     def __len__(self) -> int:
-        return len(self._by_payer)
+        return len(self._payers())

@@ -27,7 +27,6 @@ sys.stdout.reconfigure(encoding="utf-8")
 sys.stderr.reconfigure(encoding="utf-8")
 
 from whatsapp_voice import logging_setup  # noqa: E402
-from whatsapp_voice.auth import build_policy  # noqa: E402
 from whatsapp_voice.config import Settings  # noqa: E402
 
 
@@ -86,22 +85,8 @@ def main(argv: list[str] | None = None) -> int:
         print(f"▶  Handler: {settings.handler}. Set HANDLER=transcribe or "
               "HANDLER=agent in .env for more.")
 
-    if not settings.auth.enabled:
-        print("⚠  AUTH IS DISABLED — every number that reaches this server will be "
-              "answered.\n   Never run this way with real data "
-              "(docs/phase-5-auth.md).")
-    else:
-        policy = build_policy(settings.auth)
-        if policy.is_empty:
-            source = (f"file {settings.auth.allowed_numbers_file!r}"
-                      if settings.auth.allowed_numbers_file else "WHATSAPP_ALLOWED_NUMBERS")
-            print(f"✗ {source} is empty — every request will be denied.\n"
-                  "  Add your number (docs/phase-5-auth.md), or set AUTH_ENABLED=false "
-                  "for local testing.")
-            return 1
-        print(f"🔒 Auth: {len(policy)} number(s) allowed, "
-              f"{settings.auth.rate_limit} msgs per "
-              f"{int(settings.auth.rate_limit_window_s / 60)} min each")
+    print("⚠  NO ACCESS CONTROL — every number that reaches this server will be "
+          "answered, payments included.")
 
     import uvicorn
 

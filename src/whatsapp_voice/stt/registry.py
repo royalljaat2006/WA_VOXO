@@ -11,6 +11,7 @@ from ..config import SttSettings
 from .base import Transcriber
 from .elevenlabs import ElevenLabsTranscriber
 from .fallback import FallbackTranscriber
+from .google_stt import GoogleSpeechTranscriber
 from .local_whisper import LocalWhisperTranscriber
 from .openai_stt import OpenAITranscriber
 from .sarvam import SarvamTranscriber
@@ -53,6 +54,17 @@ def build_transcribers(settings: SttSettings) -> list[Transcriber]:
             ElevenLabsTranscriber(
                 api_key=settings.elevenlabs_api_key,
                 model=settings.elevenlabs_model,
+                timeout_s=settings.request_timeout_s,
+            )
+        )
+
+    if settings.google_credentials_path:
+        engines.append(
+            GoogleSpeechTranscriber(
+                credentials_path=settings.google_credentials_path,
+                model=settings.google_model,
+                language=settings.google_language,
+                alternative_languages=settings.google_alternative_languages,
                 timeout_s=settings.request_timeout_s,
             )
         )

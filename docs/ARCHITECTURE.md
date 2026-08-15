@@ -22,7 +22,6 @@ graph TD
 
     subgraph OURS["Our backend"]
         W["Webhook server<br/>verify · dedupe · 200 fast"]
-        GRD["GuardedHandler<br/>allowlist · roles · +pay · rate limit"]
         GRP["GroupHandler<br/>dormant until summoned"]
         H["Handler<br/>echo | transcribe | agent | payment"]
         A["audio.py<br/>opus → 16kHz wav"]
@@ -36,7 +35,7 @@ graph TD
 
     E["eko APIs<br/>campaigns · transfers"]
 
-    U -->|"voice note"| M --> W --> GRD --> GRP --> H
+    U -->|"voice note"| M --> W --> GRP --> H
     H --> A --> S --> PF
     PF -->|"not a PIN"| AG
     AG -->|"tool call"| E
@@ -45,11 +44,9 @@ graph TD
     PF --> AUD
     AG --> C --> M -->|"reply"| U
     W -.-> ST
-    GRD -.-> ST
 
     style PF fill:#fce9d9,stroke:#e5670f,stroke-width:2px
     style AUD fill:#e2f2e7,stroke:#127a38
-    style GRD fill:#e4eafa,stroke:#2452c0
 ```
 
 Two things in that picture carry most of the design.
@@ -59,9 +56,11 @@ out to be a PIN is consumed before the model, the conversation history or the lo
 can touch it. Everything in [voice-payments.md](voice-payments.md) follows from
 that placement.
 
-**`GuardedHandler` wraps whatever is inside it**, so authorisation cannot be
-forgotten when a new handler is written — tests assert every handler comes back
-wrapped.
+**There is no access guard.** `build_handler` returns the configured handler
+directly (wrapped only in `GroupHandler` when groups are enabled) — every
+number that reaches this server is answered, payments included. An earlier
+allowlist/role/`+pay` system (`GuardedHandler`) was removed deliberately; see
+[phase-5-auth.md](phase-5-auth.md).
 
 ### There is no frontend — and that is the point
 
@@ -286,7 +285,7 @@ existing one. Every engine is ~35 lines because `base.py` absorbs the common wor
 | `client.py` | Outbound Cloud API calls: send text, download media |
 | `payloads.py` | Meta's nested JSON → `TextMessage` / `AudioMessage` / `ContactMessage` / `UnsupportedMessage`, each carrying an optional `group_id` |
 | `signature.py` | HMAC-SHA256 verification of `X-Hub-Signature-256` |
-| `handlers.py` | The `MessageHandler` interface, `EchoHandler`, `TranscribeHandler`, `AgentHandler`, `GuardedHandler` |
+| `handlers.py` | The `MessageHandler` interface, `EchoHandler`, `TranscribeHandler`, `AgentHandler` |
 | `payment_handler.py` | The WhatsApp end of the payment flow: keeps the PIN out of the log, handles contact cards |
 | `group_handler.py` | Group etiquette — dormant until summoned, and no payments in groups |
 
@@ -371,23 +370,20 @@ to the first real user's latency — a 26s first reply instead of 1s.
 
 ```mermaid
 graph LR
-    S["Webhook server<br/>(never reopened)"] --> G["GuardedHandler"]
-    G --> GR["GroupHandler<br/>(optional)"]
+    S["Webhook server<br/>(never reopened)"] --> GR["GroupHandler<br/>(optional)"]
     GR --> H["MessageHandler"]
     H --> E["EchoHandler"]
     H --> T["TranscribeHandler"]
     H --> A["AgentHandler"]
     H --> P["PaymentHandler"]
-
-    style G fill:#e4eafa,stroke:#2452c0
 ```
 
 Selected by `HANDLER` in `.env`, dispatched in `app.py::_build_inner`. **New
 behaviour means a new handler, never an `if` in the webhook route.**
 
-`build_handler` wraps whatever it returns in `GuardedHandler`, so authorisation
-cannot be forgotten when someone adds a handler — tests assert every handler comes
-back wrapped.
+`build_handler` returns the handler directly — there is no access guard. Every
+number that reaches this server is answered; see
+[phase-5-auth.md](phase-5-auth.md) for why the earlier allowlist was removed.
 
 ### `PaymentGateway` — the boundary to real money
 
@@ -438,12 +434,13 @@ count, every health check green — is very hard to diagnose.
 |---|---|---|
 | **3 — Voice** ✅ | `TranscribeHandler` | No. Used `client.fetch_media` + `audio.to_wav` + `stt` as-is |
 | **4 — Agent** ✅ | `agent/` — `base.py`, `claude_agent.py`, `tools.py`, `campaign_tools.py`, `datasource.py`, `conversation.py`, `factory.py`; `AgentHandler` | Only `config.py` (agent settings) + one `_on_transcript` hook |
-| **5 — Auth** ✅ | `auth/` — `policy.py`, `rate_limit.py`, `guard.py`; `GuardedHandler` | Only `config.py` + one wrap in `build_handler` |
+| **5 — Auth** ❌ removed | was `auth/` — `policy.py`, `rate_limit.py`, `guard.py`; `GuardedHandler` | Built, then deliberately removed — see [phase-5-auth.md](phase-5-auth.md) |
 | **6 — Deploy** ✅ | `Dockerfile`, `logging_setup.py` | Only `/health` (now reports config) |
 
 Every phase turned out to be **additive**, as intended. Phase 3 added a hook rather
-than editing the pipeline; Phase 4 subclassed it; Phase 5 wrapped it. The webhook
-route itself has not been reopened since Phase 2.
+than editing the pipeline; Phase 4 subclassed it. The webhook route itself has not
+been reopened since Phase 2. Phase 5 wrapped it too, then was removed entirely —
+the one non-additive change in this list.
 
 Two boundaries that carry the later phases:
 

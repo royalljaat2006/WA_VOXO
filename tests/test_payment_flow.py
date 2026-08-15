@@ -122,6 +122,13 @@ class TestWrongPin:
         assert not outcome.forward       # still never reaches the model
         assert "galat" in outcome.reply
 
+    def test_the_reply_says_pintwin_not_pin(self, flow, gateway, pending):
+        """eko calls this field "pintwin" — user-facing replies say that
+        word, matching what the confirmation prompt already asked for."""
+        prepare(gateway, pending)
+        outcome = flow.handle(PAYER, "9999")
+        assert "PINTWIN" in outcome.reply
+
     def test_intent_survives_a_wrong_pin(self, flow, gateway, pending):
         prepare(gateway, pending)
         flow.handle(PAYER, "9999")

@@ -54,11 +54,6 @@ class AuditEvent:
     FAILED = "transfer_failed"
     CANCELLED = "intent_cancelled"
     EXPIRED = "intent_expired"
-    #: A caller tried to pay without the capability, or with no verified caller.
-    REFUSED = "transfer_refused"
-    #: Allowlist changes made by a super-user — see `AuditTrail.roster_changed`.
-    USER_ADDED = "user_added"
-    USER_REMOVED = "user_removed"
 
 
 class AuditTrail:
@@ -147,20 +142,6 @@ class AuditTrail:
     def cancelled(self, intent: Any, reason: str) -> None:
         self.record(AuditEvent.CANCELLED, reason=reason, **_intent_fields(intent))
 
-    def refused(self, payer: str, reason: str, **extra: Any) -> None:
-        """A transfer that never became an intent — no capability, no caller."""
-        self.record(AuditEvent.REFUSED, payer=payer, reason=reason, **extra)
-
-    def roster_changed(self, action: str, actor: str, subject: str, **extra: Any) -> None:
-        """Who granted or revoked whose access, and when.
-
-        Not money, but the same character of evidence and the same rules: an
-        investigation into a transfer needs to know who could reach the system
-        that day, and a record of that which can be edited afterwards is not
-        evidence. `actor` is the super-user who sent the command.
-        """
-        self.record(action, actor=actor, subject=subject, **extra)
-
 
 def _intent_fields(intent: Any) -> dict[str, Any]:
     """The subset of a TransferIntent that belongs in the record.
@@ -169,9 +150,16 @@ def _intent_fields(intent: Any) -> dict[str, Any]:
     `TransferIntent` later cannot silently start appearing in the audit file.
     """
     payee = getattr(intent, "payee", None)
+    payer = getattr(intent, "payer", None)
     fields: dict[str, Any] = {
         "intent_id": getattr(intent, "intent_id", None),
-        "payer": getattr(intent, "payer", None),
+        "payer": payer,
+        # The exact value sent to eko as `initiator_id` — see
+        # eko_gateway.py::_initiator_id_for. `payer` above is the full
+        # WhatsApp number; this is eko's 10-digit, no-country-code shape of
+        # the same person. Kept alongside `payer` rather than replacing it,
+        # so nothing that already reads `payer` breaks.
+        "initiator_id": "".join(c for c in (payer or "") if c.isdigit())[-10:] or None,
         "amount_paise": getattr(intent, "amount_paise", None),
         "status": str(getattr(intent, "status", "") or ""),
     }

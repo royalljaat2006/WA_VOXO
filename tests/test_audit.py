@@ -13,18 +13,18 @@ import pytest
 from whatsapp_voice.agent.payment_flow import PaymentFlow
 from whatsapp_voice.agent.payment_tools import PrepareTransferTool
 from whatsapp_voice.agent.payments import (
-    ContactBook,
     PendingIntents,
     StubPaymentGateway,
     current_payer,
 )
 from whatsapp_voice.agent.tools import ToolError
 from whatsapp_voice.audit import AuditEvent, AuditTrail
-from whatsapp_voice.auth.policy import Caller, Role, current_caller
 from whatsapp_voice.config import PaymentSettings
 
 PAYER = "919406921732"
 LIMITS = PaymentSettings(enabled=True)
+#: `_STUB_DIRECTORY`'s known "Ramesh Kumar" number, as a mobilenumber@handle VPA.
+RAMESH_VPA = "9876543210@upi"
 
 
 @pytest.fixture
@@ -105,8 +105,8 @@ class TestPaymentLifecycle:
 
     def prepare(self, gateway, pending, trail, amount="2000"):
         current_payer.set(PAYER)
-        tool = PrepareTransferTool(gateway, pending, LIMITS, ContactBook(), trail)
-        tool.run(payee="Ramesh", amount=amount)
+        tool = PrepareTransferTool(gateway, pending, LIMITS, trail)
+        tool.run(payee=RAMESH_VPA, amount=amount)
         return pending.get(PAYER)
 
     def test_preparing_is_recorded_before_anything_is_authorised(
@@ -121,7 +121,13 @@ class TestPaymentLifecycle:
         assert entry["intent_id"] == intent.intent_id
         assert entry["amount_paise"] == 200_000
         assert entry["payer"] == PAYER
-        assert entry["payee"] == "919876543210"
+        # The exact value sent to eko as initiator_id — see
+        # eko_gateway.py::_initiator_id_for. Per an explicit instruction from
+        # the project owner: initiator_id is now this specific payer, not a
+        # fixed merchant value, so the audit record carries it explicitly.
+        assert entry["initiator_id"] == "9406921732"
+        assert entry["payee"] == "9876543210"
+        assert entry["payee_vpa"] == RAMESH_VPA
         assert entry["payee_name"] == "Ramesh Kumar"
 
     def test_execution_is_recorded_too(self, gateway, pending, trail):
@@ -174,19 +180,6 @@ class TestPaymentLifecycle:
 
         assert lines(trail)[-1]["reason"] == "user_changed_subject"
 
-    def test_an_unauthorised_caller_is_recorded(self, gateway, pending, trail):
-        """Someone trying to pay who may not is exactly what an audit is for."""
-        current_payer.set(PAYER)
-        current_caller.set(Caller(number=PAYER, role=Role.ADMIN, can_pay=False))
-        tool = PrepareTransferTool(gateway, pending, LIMITS, ContactBook(), trail)
-
-        with pytest.raises(ToolError):
-            tool.run(payee="Ramesh", amount="2000")
-
-        entry = lines(trail)[-1]
-        assert entry["event"] == AuditEvent.REFUSED
-        assert entry["reason"] == "caller_not_authorised_to_pay"
-
     def test_the_payee_source_is_recorded(self, gateway, pending, trail):
         """Whether the digits came from a contact card or from speech is the
         difference between a checked number and an unchecked one."""
@@ -196,9 +189,9 @@ class TestPaymentLifecycle:
     def test_a_refused_transfer_leaves_no_prepared_record(self, gateway, pending, trail):
         """Nothing was prepared, so nothing should claim it was."""
         current_payer.set(PAYER)
-        tool = PrepareTransferTool(gateway, pending, LIMITS, ContactBook(), trail)
+        tool = PrepareTransferTool(gateway, pending, LIMITS, trail)
         with pytest.raises(ToolError):
-            tool.run(payee="Ramesh", amount="50000")     # over the per-txn cap
+            tool.run(payee=RAMESH_VPA, amount="50000")     # over the per-txn cap
 
         assert [entry["event"] for entry in lines(trail)] == []
 

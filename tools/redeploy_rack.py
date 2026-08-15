@@ -101,6 +101,14 @@ def run(client: paramiko.SSHClient, cmd: str) -> tuple[int, str, str]:
     return code, out, err
 
 
+#: Runs `tools/run_server.py`, not a bare `uvicorn ...` CLI invocation.
+#: `logging_setup.configure()` is only ever called from inside that script's
+#: `main()` — calling `uvicorn` directly skips it, which leaves the root
+#: logger at Python's default WARNING level. Every `logger.info(...)` in the
+#: app (every "Queued message from", every "Intent prepared") then vanishes
+#: silently — nothing crashes, health checks still pass, so this went
+#: unnoticed for a while. `>>`, not `>`, so a redeploy does not truncate the
+#: log history the /ops page depends on.
 REMOTE_RESTART_CMD = f"""
 set -e
 cd {REMOTE_DIR}
@@ -119,9 +127,8 @@ if [ -f .run.pid ]; then
   rm -f .run.pid
 fi
 
-nohup .venv/bin/uvicorn whatsapp_voice.whatsapp.app:create_app \\
-  --factory --host 0.0.0.0 --port {PORT} --workers 1 \\
-  > uvicorn.log 2>&1 &
+nohup .venv/bin/python tools/run_server.py --port {PORT} \\
+  >> uvicorn.log 2>&1 &
 echo $! > .run.pid
 sleep 2
 echo "PID: $(cat .run.pid)"

@@ -7,7 +7,12 @@ the caller asks instead of guessing.
 
 import pytest
 
-from whatsapp_voice.agent.parsing import extract_pin, format_amount, parse_amount_paise
+from whatsapp_voice.agent.parsing import (
+    extract_pin,
+    format_amount,
+    parse_amount_paise,
+    parse_vpa,
+)
 
 
 class TestPlainDigits:
@@ -159,6 +164,26 @@ class TestExtractPin:
         ("ek do teen char", "1234"),
         ("mera pin 1234 hai", "1234"),
         ("PIN is 1234", "1234"),
+        # "ha" is the colloquial Hinglish spelling of "hai" that real users
+        # actually type — its absence from the filler list silently dropped
+        # every PIN confirmation phrased this way. Observed in a real run.
+        ("mera pin 1234 ha", "1234"),
+        ("1234 mera pin ha", "1234"),
+        ("1234 mera pin use kro", "1234"),
+        # Devanagari filler — a Hindi-spoken PIN is wrapped in "मेरा पिन ...
+        # है" the same way an English one is in "mera pin ... hai", and
+        # Whisper/Sarvam transcribe Hindi speech in this script, not Latin.
+        # Every voice PIN confirmation in Hindi was silently dropped without
+        # these. Observed in a real run.
+        ("मेरा पिन चार दो दो नौ है", "4229"),
+        ("चार दो दो नौ मेरा पिन है", "4229"),
+        ("पिन है चार दो दो नौ", "4229"),
+        # User-facing prompts now say "PINTWIN" (eko's own field name), not
+        # "PIN" — see agent/handoff.py and PAYMENT_PROMPT. A payer reading
+        # the prompt back has to still parse, same as "mera pin ... hai" did.
+        ("mera pintwin 1234 hai", "1234"),
+        ("PINTWIN is 1234", "1234"),
+        ("1234 mera pintwin ha", "1234"),
     ])
     def test_accepts_pins(self, text, pin):
         assert extract_pin(text) == pin
@@ -183,3 +208,80 @@ class TestExtractPin:
     def test_custom_length(self):
         assert extract_pin("12345", lengths=(5,)) == "12345"
         assert extract_pin("1234", lengths=(6,)) is None
+
+
+class TestParseVpa:
+    """A wrong VPA is worse than a wrong amount: money goes to a stranger,
+    not just the wrong number. Everything ambiguous must return None."""
+
+    @pytest.mark.parametrize("text,vpa", [
+        ("ramesh@okaxis", "ramesh@okaxis"),
+        ("9000000000@upi", "9000000000@upi"),
+        ("ramesh at okaxis", "ramesh@okaxis"),
+        ("ramesh at the rate okaxis", "ramesh@okaxis"),
+        ("RAMESH@OKAXIS", "ramesh@okaxis"),
+    ])
+    def test_already_clean_or_simply_spoken(self, text, vpa):
+        assert parse_vpa(text) == vpa
+
+    @pytest.mark.parametrize("text", [
+        "Rameshwar",              # not a VPA shape at all
+        "",
+        "ramesh okaxis",          # no separator of any kind
+    ])
+    def test_rejects_non_vpas(self, text):
+        assert parse_vpa(text) is None
+
+    def test_devanagari_digit_and_letter_names_reconstruct_the_vpa(self):
+        """Real failure: a payer read '7763857505@ptyes' aloud digit by
+        digit, and Sarvam wrote the English digit and letter *names* out in
+        Devanagari script instead of digits or Latin letters —
+        "सेवेन सेवेन सिक्स थ्री एट फाइव सेवेन फाइव ज़ीरो फाइव एट पी टी वाई ई
+        एस". The old parser rejected this outright and made the payer repeat
+        themselves."""
+        text = (
+            "सेवेन सेवेन सिक्स थ्री एट फाइव सेवेन फाइव ज़ीरो फाइव एट "
+            "पी टी वाई ई एस"
+        )
+        assert parse_vpa(text) == "7763857505@ptyes"
+
+    def test_at_versus_eight_is_resolved_by_position(self):
+        """'एट' means both 'at' and 'eight' — only the LAST occurrence with a
+        letter after it is the VPA's '@'; an earlier one surrounded by more
+        digits is '8', not a second separator."""
+        text = "फाइव एट सिक्स एट सिक्स"  # five eight six @ six -> 586@6? no letters after final एट
+        # No letters anywhere after the last 'एट', so nothing qualifies as
+        # '@' and the whole thing is read as digits — which then fails
+        # _VPA_RE for having no '@' at all, exactly like an ordinary
+        # non-VPA phrase would.
+        assert parse_vpa(text) is None
+
+    def test_surrounding_sentence_noise_is_dropped_not_guessed_into(self):
+        """'mera UPI ID hai' framing a VPA is common — dropped as noise
+        outside the longest reconstructable run, not stitched into it."""
+        text = "mera UPI ID hai पी टी वाई ई एस एट ओ के आइसीआईसीआई"
+        # Even though this specific sentence does not fully reconstruct
+        # (ओके आइसीआईसीआई is not in the letter table), the important
+        # property is that it does not silently produce a wrong VPA — either
+        # a clean reconstruction or None, never a guess.
+        result = parse_vpa(text)
+        assert result is None or result.count("@") == 1
+
+    def test_a_transcript_with_unrecoverable_noise_in_the_middle_still_asks_again(self):
+        """The exact real transcript this fix was built from, garbled words
+        and all: 'द रट' (untranslatable noise between the digits and the
+        handle) breaks the one contiguous run a reconstruction needs.
+        Returning None here — asking the payer to repeat — is the correct,
+        safe outcome, not a bug: guessing through unrecognisable words is
+        exactly what this function must never do."""
+        text = (
+            "सेवेन सेवेन सिक्स थ्री एट फाइव सेवेन फाइव ज़ीरो फाइव एट द रट "
+            "पी टी वाई ई एस मेरा यूपी आई आई डी है"
+        )
+        assert parse_vpa(text) is None
+
+    def test_mixed_script_handle_already_latin(self):
+        """Only the digits got Devanagari-transliterated; the handle came
+        through as plain Latin text already — a realistic partial case."""
+        text = "सेवेन सेवेन सिक्स थ्री एट फाइव सेवेन फाइव ज़ीरो फाइव एट ptyes"
+        assert parse_vpa(text) == "7763857505@ptyes"

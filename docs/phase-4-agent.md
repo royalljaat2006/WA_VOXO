@@ -69,23 +69,51 @@ transcript it heard, then the answer.
 
 ## Providers
 
-Two are supported, chosen with `AGENT_PROVIDER`:
+Three are supported, chosen with `AGENT_PROVIDER`:
 
-| | `claude` (default) | `nemotron` |
-|---|---|---|
-| API | Anthropic Messages | NVIDIA NIM (OpenAI-compatible) |
-| Default model | `claude-sonnet-5` | `nvidia/nemotron-3-ultra-550b-a55b` |
-| Key | `ANTHROPIC_API_KEY` | `NVIDIA_API_KEY` |
-| Depth control | `AGENT_EFFORT` | `AGENT_TEMPERATURE` |
+| | `claude` (default) | `nemotron` | `gemini` |
+|---|---|---|---|
+| API | Anthropic Messages | NVIDIA NIM (OpenAI-compatible) | Google, OpenAI-compatible endpoint |
+| Default model | `claude-sonnet-5` | `nvidia/llama-3.3-nemotron-super-49b-v1.5` | `gemini-3.6-flash` |
+| Key | `ANTHROPIC_API_KEY` | `NVIDIA_API_KEY` | `GEMINI_API_KEY` |
+| Depth control | `AGENT_EFFORT` | `AGENT_TEMPERATURE` | `AGENT_TEMPERATURE` |
+| Free tier | no | yes | yes — **but see the warning below** |
 
-They are separate `Agent` implementations, not one class with a flag, because the
-wire formats genuinely differ — see the table at the top of `nemotron_agent.py`.
-Both reuse the same system prompt, the same tools, and the same conversation
-store; only the request/response shaping differs.
+`claude` is its own implementation because Anthropic's wire format genuinely
+differs — see the table at the top of `openai_compatible.py`. The other two are
+four-line subclasses of `OpenAICompatibleAgent`, which holds the whole tool
+loop: Google publishes an OpenAI-dialect endpoint, so the same `openai` client
+drives both and no second SDK is needed. Each subclass answers only three
+questions — which key, which URL, which model.
 
-Note the settings do **not** overlap: Claude rejects `temperature`, NVIDIA has no
-`effort`. Sharing one field would mean sending a parameter that 400s on whichever
-provider was not selected.
+All three reuse the same system prompt, tools, and conversation store.
+
+Note the settings do **not** overlap: Claude rejects `temperature`, and neither
+OpenAI-compatible provider has `effort`. Sharing one field would mean sending a
+parameter that 400s on whichever provider was not selected. The same goes for
+keys — `is_configured` checks only the *selected* provider's key, so a
+`GEMINI_API_KEY` left over from a trial cannot make an unconfigured Claude
+deployment look ready.
+
+### ⚠️ Gemini's free tier reads your traffic
+
+On the **unpaid** Gemini API, Google uses submitted content and generated
+responses to improve its products, and human reviewers may read and annotate
+them. Google's own guidance is not to send personal or confidential data to the
+unpaid service. The paid tier and Vertex AI do not do this. (EEA/Switzerland/UK
+get the paid data terms even on the free tier; India does not.)
+
+On this deployment, what reaches the model is **payee phone numbers, UPI IDs,
+transfer amounts and payee names** — real, identifiable people.
+
+What it never sees, on any provider, is **the PIN**: the gate in
+`payment_flow.py` runs in front of the agent, not behind it. That is what makes
+a free-tier trial merely questionable rather than immediately disqualifying.
+
+`build_agent` logs a warning at every start when `gemini` is paired with a real
+payment gateway. Fine for development, wiring and fake-number demos; read
+<https://ai.google.dev/gemini-api/terms> before leaving it on for real
+transfers or a compliance review.
 
 ```
 AGENT_PROVIDER=nemotron

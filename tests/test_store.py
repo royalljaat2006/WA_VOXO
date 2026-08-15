@@ -2,8 +2,8 @@
 
 The interesting tests here are the ones about `claim` and `incr`. Both exist
 because a read-then-write across processes is not the same operation: two
-workers can both read "absent" and both act, which is the duplicate reply and
-the doubled rate limit this whole module is for.
+workers can both read "absent" and both act, which is the duplicate reply this
+whole module is for.
 
 `RedisStore` is exercised against a fake that behaves like the commands used,
 rather than a live server — the contract being tested is ours, not Redis's.
@@ -170,8 +170,8 @@ class TestWorkerGuard:
         guard_worker_count(1, MemoryStore())
 
     def test_several_workers_on_memory_is_refused(self):
-        """Silently, this produces duplicate replies, lost PINs and a rate limit
-        multiplied by the worker count — while every health check passes."""
+        """Silently, this produces duplicate replies and lost PINs — while
+        every health check passes."""
         with pytest.raises(RuntimeError, match="REDIS_URL"):
             guard_worker_count(4, MemoryStore())
 

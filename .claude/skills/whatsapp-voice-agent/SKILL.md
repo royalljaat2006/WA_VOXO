@@ -88,8 +88,9 @@ New behaviour is a **new `MessageHandler`**, never an `if` in the webhook route.
    banner.
 4. **Every failure path must reply with something.** A user cannot tell a broken bot
    from a slow one. Follow the pattern in `TranscribeHandler._handle_audio`.
-5. `build_handler` wraps your handler in `GuardedHandler` automatically — do not add
-   your own auth check.
+5. `build_handler` returns your handler directly — there is no access guard to
+   rely on. Every number that reaches the server is answered; see
+   `docs/phase-5-auth.md` for why that allowlist was removed.
 
 ## Recipe: tune the system prompt
 
@@ -107,19 +108,15 @@ load-bearing; understand why before editing:
 request. After any change, re-read it as if you were the model: is each instruction
 actionable, or just reassuring?
 
-## Recipe: touch auth or rate limits
+## There is no auth or rate-limit layer to touch
 
-- Allowlist and roles: `auth/policy.py`. Rate limiting: `auth/rate_limit.py`. The
-  gate itself: `auth/guard.py`.
-- **Keep identity checked before rate.** Reversing them lets unknown numbers consume
-  limiter memory, and a distinct "too many requests" reply tells a prober their
-  number is recognised.
-- **Keep the unknown-number reply uninformative.** It must not name eko, the
-  allowlist, or what the service does. There is a test asserting this.
-- **Do not count rejected attempts** against the window — that turns a limit into a
-  permanent lockout.
-- Adding a role: extend `Role` and `_ROLE_RANK`. Gate a sensitive tool with
-  `caller.may(Role.ANALYST)`.
+`auth/` (allowlist, roles, `+pay`, rate limiting, `GuardedHandler`) was removed
+deliberately — see `docs/phase-5-auth.md`. Every number that reaches this
+server is answered, payments included, bounded only by the amount caps and PIN
+in `agent/payment_flow.py`. If access control is wanted again, the direction
+discussed was **per-payer eko credentials** (looked up by WhatsApp number) or
+switching the payment handoff to `HandoffKind.UPI_LINK` (`agent/handoff.py`),
+not resurrecting the old allowlist.
 
 ---
 
@@ -129,8 +126,6 @@ Work down this list — the order matches how often each is the cause.
 
 | Check | How |
 |---|---|
-| Was the sender allowlisted? | Look for `Denied unknown number …NNNN` in the logs |
-| Rate limited? | `Rate limited …NNNN` |
 | Did Meta deliver at all? | `Queued AudioMessage from …` should appear |
 | Signature rejected? | `Rejected webhook with invalid signature` — `WHATSAPP_APP_SECRET` mismatch |
 | Media download failed? | Media URLs expire in ~5 min; `fetch_media` must resolve and download back-to-back |
@@ -154,8 +149,8 @@ state (Redis), not a higher worker count — `docs/phase-6-deploy.md` has the ta
 
 ## Preparing a demo
 
-1. `curl <host>/health` — confirm `auth_enabled: true`,
-   `signature_verification: true`, and check `stub_data`.
+1. `curl <host>/health` — confirm `signature_verification: true`, and check
+   `stub_data`. `access_control` will read `"none"` — there is no allowlist.
 2. If `stub_data: true`, **say so on the slide.** Those numbers are invented, and
    the server prints a warning at startup for the same reason.
 3. Use a **permanent** System User token, not a 24-hour temporary one

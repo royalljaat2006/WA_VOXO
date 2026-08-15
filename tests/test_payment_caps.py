@@ -8,16 +8,14 @@ That is what the daily cap is for.
 import pytest
 
 from whatsapp_voice.agent.payment_tools import PrepareTransferTool
-from whatsapp_voice.agent.payments import (
-    ContactBook,
-    PendingIntents,
-    StubPaymentGateway,
-    current_payer,
-)
+from whatsapp_voice.agent.payments import PendingIntents, StubPaymentGateway, current_payer
 from whatsapp_voice.agent.tools import ToolError
 from whatsapp_voice.config import PaymentSettings
 
 PAYER = "919000000009"
+
+#: `_STUB_DIRECTORY`'s known "Ramesh Kumar" number, as a mobilenumber@handle VPA.
+RAMESH_VPA = "9876543210@upi"
 
 
 @pytest.fixture
@@ -28,10 +26,10 @@ def gateway():
 def tool_with(gateway, **overrides):
     current_payer.set(PAYER)
     settings = PaymentSettings(enabled=True, **overrides)
-    return PrepareTransferTool(gateway, PendingIntents(), settings, ContactBook())
+    return PrepareTransferTool(gateway, PendingIntents(), settings)
 
 
-def send(gateway, amount_paise, payee="Ramesh"):
+def send(gateway, amount_paise, payee="9876543210"):
     """Prepare and execute, so the gateway's ledger records a real spend."""
     intent = gateway.prepare_transfer(PAYER, gateway.resolve_payee(payee), amount_paise)
     assert gateway.confirm_and_execute(intent, "1234").ok
@@ -54,26 +52,26 @@ class TestDailyCap:
         """An intent nobody confirmed spent nothing, so it must not eat into the
         day's allowance."""
         tool = tool_with(gateway)
-        tool.run(payee="Ramesh", amount="2000")
+        tool.run(payee=RAMESH_VPA, amount="2000")
         assert gateway.spent_today_paise(PAYER) == 0
 
     def test_transfer_over_the_remaining_allowance_is_refused(self, gateway):
         tool = tool_with(gateway, daily_cap_paise=500_000)
         send(gateway, 400_000)
         with pytest.raises(ToolError, match="limit"):
-            tool.run(payee="Ramesh", amount="2000")
+            tool.run(payee=RAMESH_VPA, amount="2000")
 
     def test_transfer_within_the_remaining_allowance_is_allowed(self, gateway):
         tool = tool_with(gateway, daily_cap_paise=500_000)
         send(gateway, 400_000)
-        assert "status=prepared" in tool.run(payee="Ramesh", amount="500")
+        assert "status=prepared" in tool.run(payee=RAMESH_VPA, amount="500")
 
     def test_the_message_says_what_is_left(self, gateway):
         """The user has to be able to act on the refusal, not just receive it."""
         tool = tool_with(gateway, daily_cap_paise=500_000)
         send(gateway, 400_000)
         with pytest.raises(ToolError) as caught:
-            tool.run(payee="Ramesh", amount="2000")
+            tool.run(payee=RAMESH_VPA, amount="2000")
         assert "1,000.00" in str(caught.value)   # ₹1,000 left of ₹5,000
 
     def test_many_small_transfers_hit_the_cap(self, gateway):
@@ -84,7 +82,7 @@ class TestDailyCap:
         send(gateway, 50_000)
         send(gateway, 50_000)
         with pytest.raises(ToolError):
-            tool.run(payee="Ramesh", amount="100")
+            tool.run(payee=RAMESH_VPA, amount="100")
 
     def test_the_cap_is_per_payer(self, gateway):
         send(gateway, 400_000)
@@ -94,7 +92,7 @@ class TestDailyCap:
         tool = tool_with(gateway, daily_cap_paise=200_000)
         send(gateway, 200_000)
         with pytest.raises(ToolError, match="0.00 is left"):
-            tool.run(payee="Ramesh", amount="100")
+            tool.run(payee=RAMESH_VPA, amount="100")
 
 
 class TestCapsCompose:
@@ -104,12 +102,12 @@ class TestCapsCompose:
         it can never satisfy."""
         tool = tool_with(gateway)
         with pytest.raises(ToolError, match="per-transaction"):
-            tool.run(payee="Ramesh", amount="50000")
+            tool.run(payee=RAMESH_VPA, amount="50000")
 
     def test_a_refused_transfer_leaves_no_pending_intent(self, gateway):
         tool = tool_with(gateway, daily_cap_paise=100)
         with pytest.raises(ToolError):
-            tool.run(payee="Ramesh", amount="2000")
+            tool.run(payee=RAMESH_VPA, amount="2000")
         assert len(tool._pending) == 0
 
     def test_defaults_are_the_documented_ones(self):

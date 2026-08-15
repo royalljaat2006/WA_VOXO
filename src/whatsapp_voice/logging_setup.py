@@ -18,6 +18,10 @@ import json
 import logging
 import re
 import sys
+import threading
+import traceback
+from collections import deque
+from datetime import UTC, datetime
 from typing import Any
 
 #: Bearer tokens and Meta access tokens. Meta's start with "EAA".
@@ -76,6 +80,57 @@ class JsonFormatter(logging.Formatter):
         return json.dumps(payload, ensure_ascii=False)
 
 
+class RingBufferHandler(logging.Handler):
+    """Keeps the last N formatted records in memory, for the `/ops` activity page.
+
+    A log *file* only exists because whatever started the process happened to
+    redirect stdout there (`nohup ... > uvicorn.log`) — that is an operator
+    choice, not something code should assume. This handler makes "what has this
+    process logged recently" available from inside the process itself, so the
+    ops page works the same way locally, under `--reload`, or behind any
+    deployment's own redirection.
+
+    Not given its own `RedactingFilter`: handlers on one logger share the same
+    `LogRecord` instance, and the stdout handler's filter (added first, in
+    `configure`) already mutates `record.msg` in place before this handler's
+    `emit` ever sees it.
+    """
+
+    def __init__(self, maxlen: int = 2000) -> None:
+        super().__init__()
+        self._buffer: deque[dict[str, Any]] = deque(maxlen=maxlen)
+        self._lock = threading.Lock()
+
+    def emit(self, record: logging.LogRecord) -> None:
+        entry: dict[str, Any] = {
+            "time": datetime.fromtimestamp(record.created, tz=UTC)
+            .isoformat(timespec="milliseconds"),
+            "level": record.levelname,
+            "logger": record.name,
+            "message": record.getMessage(),
+        }
+        if record.exc_info:
+            entry["exception"] = "".join(traceback.format_exception(*record.exc_info))
+        with self._lock:
+            self._buffer.append(entry)
+
+    def snapshot(self) -> list[dict[str, Any]]:
+        """A copy, oldest first — safe to iterate while logging continues."""
+        with self._lock:
+            return list(self._buffer)
+
+
+#: Set by `configure`. Module-level because the ops page has no other way to
+#: reach "whatever handler is currently installed on the root logger" —
+#: mirrors how `logging.getLogger()` itself is a module-level singleton.
+_ring_buffer: RingBufferHandler | None = None
+
+
+def get_ring_buffer() -> RingBufferHandler | None:
+    """The in-memory activity buffer, or None before `configure` has run."""
+    return _ring_buffer
+
+
 def configure(level: str = "INFO", fmt: str = "text") -> None:
     """Install handlers on the root logger. Idempotent.
 
@@ -83,6 +138,7 @@ def configure(level: str = "INFO", fmt: str = "text") -> None:
     entrypoint. Safe to call twice — existing handlers are replaced rather than
     added to, so a reload does not double every line.
     """
+    global _ring_buffer
     root = logging.getLogger()
     root.setLevel(level.upper())
 
@@ -99,6 +155,12 @@ def configure(level: str = "INFO", fmt: str = "text") -> None:
         )
     )
     root.addHandler(handler)
+
+    # Added after the stdout handler, so redaction has already happened to the
+    # shared LogRecord by the time this one's emit() runs — see the class
+    # docstring.
+    _ring_buffer = RingBufferHandler()
+    root.addHandler(_ring_buffer)
 
     # uvicorn installs its own handlers; route them through ours so access logs
     # get redacted too.

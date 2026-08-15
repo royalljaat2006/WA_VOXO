@@ -105,10 +105,28 @@ def _strip_punctuation(text: str) -> str:
         for char in text
     )
 
-#: Words a user may wrap around a PIN without changing it.
+#: Words a user may wrap around a PIN without changing it. "ha" is the
+#: colloquial Hinglish spelling of "hai" — extremely common in typed
+#: WhatsApp messages — and its absence here silently rejected every real
+#: "mera pin 1234 ha" a user actually typed, dropping the pending transfer.
+#:
+#: The Devanagari entries matter just as much: `_PIN_WORDS` below already
+#: accepts Devanagari digit-words, but a Hindi voice PIN is never *just*
+#: digits — "मेरा पिन ... है" wraps them the same way "mera pin ... hai"
+#: does, and Whisper/Sarvam transcribe Hindi speech in Devanagari script, not
+#: Latin. Without these, every Hindi-spoken PIN confirmation was silently
+#: dropped as "not a PIN" — observed in a real run, voice only, language 'hi'.
 _PIN_FILLER = frozenset({
-    "pin", "mera", "meri", "hai", "he", "is", "my", "the", "code",
+    "pin", "mera", "meri", "hai", "ha", "he", "is", "my", "the", "code",
     "password", "number", "yeh", "ye", "ok", "okay", "haan", "han",
+    "use", "kro", "karo",
+    "पिन", "मेरा", "मेरी", "है", "हैं", "हे", "यह", "ये", "हाँ", "हां",
+    "कोड", "नंबर", "पासवर्ड",
+    # eko calls this field "pintwin" — user-facing prompts now say that word
+    # instead of "PIN" (agent/handoff.py, PAYMENT_PROMPT), so a payer reading
+    # a prompt back ("mera pintwin 1234 hai") says it too. "twin" alone is
+    # included as well, in case a transcript splits "pintwin" into two words.
+    "pintwin", "twin", "पिनट्विन", "ट्विन",
 })
 
 #: Spoken digits for a PIN. Separate from _UNITS: here a bare "do" IS a 2,
@@ -234,12 +252,151 @@ def format_amount(paise: int) -> str:
 #: part is looser, matching what NPCI actually allows.
 _VPA_RE = re.compile(r"^[a-zA-Z0-9.\-_]{2,256}@[a-zA-Z][a-zA-Z0-9]{1,63}$")
 
+#: Single digits, however Sarvam happens to render them for a Hindi speaker
+#: reading a VPA or mobile number *digit by digit* — sometimes the English
+#: word transliterated into Devanagari ("सेवेन"), sometimes literal English,
+#: sometimes the native Hindi word ("सात"). A VPA's digits are always read
+#: this way, never as a number word like an amount is ("panch sau") — so this
+#: table is separate from `_UNITS` above and only ever single digits.
+#: "एट"/"at" is deliberately absent — it is ambiguous with "eight" and
+#: resolved positionally in `_reconstruct_spoken_vpa`, not here.
+_SPOKEN_DIGITS: dict[str, str] = {
+    "zero": "0", "ज़ीरो": "0", "जीरो": "0", "शून्य": "0",
+    "one": "1", "वन": "1", "एक": "1",
+    "two": "2", "टू": "2", "दो": "2",
+    "three": "3", "थ्री": "3", "तीन": "3",
+    "four": "4", "फोर": "4", "फ़ोर": "4", "चार": "4",
+    "five": "5", "फाइव": "5", "पांच": "5", "पाँच": "5",
+    "six": "6", "सिक्स": "6", "छह": "6", "छे": "6",
+    "seven": "7", "सेवन": "7", "सेवेन": "7", "सात": "7",
+    "eight": "8", "आठ": "8",
+    "nine": "9", "नाइन": "9", "नौ": "9",
+}
+
+#: "at"/"एट" — a VPA's '@' read aloud. The same word (both spellings) also
+#: means "eight", which `_reconstruct_spoken_vpa` resolves by position, not
+#: this table.
+_AT_WORDS = {"at", "एट"}
+
+#: Spoken letter names, Devanagari transliteration, for a UPI handle read out
+#: letter by letter ("पी टी वाई ई एस" → "ptyes"). A bare single Latin letter
+#: ("p", "t"...) already passes through unchanged — this table exists only
+#: for the script Sarvam actually returns for a Hindi speaker.
+_SPOKEN_LETTERS: dict[str, str] = {
+    "ए": "a", "बी": "b", "सी": "c", "डी": "d", "ई": "e", "एफ": "f",
+    "जी": "g", "एच": "h", "आई": "i", "जे": "j", "के": "k", "एल": "l",
+    "एम": "m", "एन": "n", "ओ": "o", "पी": "p", "क्यू": "q", "आर": "r",
+    "एस": "s", "टी": "t", "यू": "u", "वी": "v", "डब्ल्यू": "w",
+    "एक्स": "x", "वाई": "y", "ज़ेड": "z", "ज़ी": "z",
+}
+
+#: One already-clean token: a bare digit string, a bare Latin letter, or a
+#: short run of VPA-legal characters ("ptyes", "9000000000") — the shape a
+#: partially-transcribed VPA arrives in when only *some* of it got rendered
+#: in Devanagari.
+_CLEAN_VPA_CHUNK = re.compile(r"^[a-zA-Z0-9@._-]+$")
+
+
+def _classify_vpa_token(token: str) -> str | None:
+    """One token → the character(s) it contributes to a VPA, or None if it
+    is not part of one (filler, noise, an unrecognised word)."""
+    low = token.lower()
+    if low in _SPOKEN_DIGITS:
+        return _SPOKEN_DIGITS[low]
+    if low in _AT_WORDS:
+        return "@"  # tentative; `_reconstruct_spoken_vpa` may rewrite to "8"
+    if token in _SPOKEN_LETTERS:
+        return _SPOKEN_LETTERS[token]
+    if len(token) == 1 and token.isalpha() and token.isascii():
+        return token.lower()
+    if _CLEAN_VPA_CHUNK.match(token):
+        return token.lower()
+    return None
+
+
+def _looks_like_handle_piece(token: str) -> bool:
+    """Whether this token is evidence a UPI handle has started — used only to
+    resolve "एट"/"at" against its "eight" reading. Deliberately broader than
+    "a single spelled-out letter": a handle can also arrive already-clean
+    ("ptyes") when only the digits before it got Devanagari-transliterated."""
+    if token in _SPOKEN_LETTERS:
+        return True
+    if len(token) == 1 and token.isalpha() and token.isascii():
+        return True
+    low = token.lower()
+    if low in _SPOKEN_DIGITS or low in _AT_WORDS:
+        return False
+    return bool(_CLEAN_VPA_CHUNK.match(token)) and any(c.isalpha() for c in token)
+
+
+def _reconstruct_spoken_vpa(text: str) -> str | None:
+    """Rebuild a VPA from a transcript where Sarvam wrote spoken digits and
+    letters out as words instead of characters — `parse_vpa`'s fallback for
+    exactly this, once the plain "already mostly Latin/digits" path fails.
+
+    Real example that motivated this: a payer read "7763857505@ptyes" aloud
+    digit by digit, and a Hindi-language transcript came back as
+    "सेवेन सेवेन सिक्स थ्री एट फाइव सेवेन फाइव ज़ीरो फाइव एट पी टी वाई ई एस" —
+    the English digit and letter *names*, transliterated into Devanagari, not
+    digits or Latin letters at all. `_VPA_RE` correctly rejects that outright;
+    this recovers it instead of making the payer repeat themselves.
+
+    Finds the **longest contiguous run** of classifiable tokens and treats
+    everything outside it as surrounding sentence noise ("mera UPI ID hai",
+    "at the rate") — deliberately not stripping filler word by word, which
+    would mean silently guessing which words are safe to drop. A genuinely
+    unrecognisable or noisy transcript breaks the run and this returns None,
+    same as `parse_vpa` already does — asking again is the safe failure, not
+    a best-effort reconstruction through words that make no sense.
+    """
+    tokens = text.strip().split()
+    if not tokens:
+        return None
+
+    classified = [_classify_vpa_token(t) for t in tokens]
+
+    best_start = best_len = -1
+    run_start = None
+    for i, c in enumerate(classified + [None]):
+        if c is not None and run_start is None:
+            run_start = i
+        elif c is None and run_start is not None:
+            if i - run_start > best_len:
+                best_start, best_len = run_start, i - run_start
+            run_start = None
+
+    if best_start == -1:
+        return None
+
+    run_tokens = tokens[best_start:best_start + best_len]
+    run_chars = classified[best_start:best_start + best_len]
+
+    # Resolve "at"/"एट" within the chosen run only: the LAST occurrence that
+    # still has something handle-shaped after it is the VPA's one "@"; every
+    # earlier occurrence is "8" — a VPA has exactly one separator, and the
+    # digits always come before the handle. "Handle-shaped" is deliberately
+    # broader than "a single spelled-out letter": a handle can also arrive
+    # already-clean ("ptyes") when only the digits got Devanagari-
+    # transliterated — see test_mixed_script_handle_already_latin.
+    at_positions = [i for i, t in enumerate(run_tokens) if t.lower() in _AT_WORDS]
+    chosen_at = None
+    for i in at_positions:
+        if any(_looks_like_handle_piece(run_tokens[j]) for j in range(i + 1, len(run_tokens))):
+            chosen_at = i
+    for i in at_positions:
+        run_chars[i] = "@" if i == chosen_at else "8"
+
+    return "".join(run_chars) or None
+
 
 def parse_vpa(text: str) -> str | None:
     """Extract a UPI VPA from speech or text. None if it is not unambiguously one.
 
     Accepts a literal `ramesh@okaxis` as well as the spoken forms ASR actually
-    produces for '@' — `ramesh at okaxis`, `ramesh at the rate okaxis`.
+    produces for '@' — `ramesh at okaxis`, `ramesh at the rate okaxis` — and,
+    failing that, a transcript where Sarvam wrote spoken digits and letters
+    out as Devanagari words instead of characters; see
+    `_reconstruct_spoken_vpa`.
 
     Deliberately strict, same reasoning as `extract_pin`: a string that is not
     clearly `local@handle` returns None rather than a best guess, so the caller
@@ -253,7 +410,41 @@ def parse_vpa(text: str) -> str | None:
     normalised = re.sub(r"\s+at\s+", "@", normalised, flags=re.IGNORECASE)
     normalised = normalised.replace(" ", "").lower()
 
-    return normalised if _VPA_RE.match(normalised) else None
+    if _VPA_RE.match(normalised):
+        return normalised
+
+    reconstructed = _reconstruct_spoken_vpa(text)
+    return reconstructed if reconstructed and _VPA_RE.match(reconstructed) else None
+
+
+def mobile_from_vpa(vpa: str) -> str | None:
+    """A mobile number embedded in a VPA's local part, when there is one.
+
+    **Most VPAs do not contain one.** The local part is whatever the payee's
+    bank let them choose — a name, a nickname, a mobile, a name and some
+    digits, anything: `9000000000@upi`, `firstname.lastname@okicici`,
+    `nickname99@ybl`. So this returns a number for the first shape and `None`
+    for the rest, and `None` is an ordinary answer here, not a failure.
+
+    It exists because eko's confirmed transfer contract always needs a mobile
+    number — `recipient_id_type: mobile_number` / `customer_id: <mobile>` —
+    with the VPA riding along separately as `customer_vpa`. When the spoken
+    UPI ID happens to carry the mobile, that is one less thing to ask for; when
+    it does not, the caller has to ask. What it must never do is *invent* one,
+    which is why a local part with too few digits returns `None` rather than
+    something padded or truncated into shape.
+
+    Requires the digits to be the whole local part: `firstname9876543210@ybl`
+    yields None, because digits sitting inside a name are far more likely to be
+    part of the handle than a phone number, and a wrong `customer_id` sends
+    money to a stranger.
+    """
+    local = vpa.split("@", 1)[0]
+    digits = "".join(c for c in local if c.isdigit())
+    # 10 plain digits, or the same with a country code — and nothing else.
+    if digits != local or len(digits) not in (10, 11, 12):
+        return None
+    return digits[-10:]
 
 
 def extract_pin(text: str, lengths: tuple[int, ...] = (4, 6)) -> str | None:

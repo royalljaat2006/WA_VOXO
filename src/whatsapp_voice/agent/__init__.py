@@ -13,7 +13,9 @@ from .datasource import (
 )
 from .factory import build_agent
 from .formatting import for_whatsapp
+from .gemini_agent import GeminiAgent
 from .nemotron_agent import NemotronAgent
+from .openai_compatible import OpenAICompatibleAgent
 from .tools import Tool, ToolError, ToolRegistry
 
 __all__ = [
@@ -28,7 +30,9 @@ __all__ = [
     "ConversationStore",
     "DataSourceError",
     "DeliveryReport",
+    "GeminiAgent",
     "NemotronAgent",
+    "OpenAICompatibleAgent",
     "ScriptedAgent",
     "StubCampaignSource",
     "Tool",

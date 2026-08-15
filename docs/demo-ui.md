@@ -30,7 +30,7 @@ That is why it lives in `frontend/` with its own dependencies, per
 
 Backend:
 ```bash
-DEMO_ENABLED=true AUTH_ENABLED=false HANDLER=agent \
+DEMO_ENABLED=true HANDLER=agent \
   .venv/bin/python tools/run_server.py
 ```
 
@@ -42,8 +42,8 @@ npm run dev --prefix frontend
 
 Open <http://localhost:5173>.
 
-`AUTH_ENABLED=false` is only for local use — the demo API has no phone number to
-check against the allowlist, so the guard would deny everything.
+There is no allowlist to work around — see
+[phase-5-auth.md](phase-5-auth.md) for why.
 
 For a transcript-only demo (no Anthropic key needed), use `HANDLER=transcribe`.
 Recording and transcription still work; the reply is the transcript.
@@ -97,8 +97,11 @@ Three endpoints under `/demo`, mounted only when `DEMO_ENABLED=true`.
 
 ### Security
 
-**These endpoints bypass the WhatsApp allowlist**, because an HTTP caller has no
-verified phone number to check. Consequences, all deliberate:
+**These endpoints have no verified phone number behind them at all** — every
+session gets a synthetic `demo:<session_id>` identity. (The WhatsApp path
+itself has no allowlist either, since Phase 5 was removed — see
+[phase-5-auth.md](phase-5-auth.md) — but the demo path never had a real number
+to check in the first place.) Consequences, all deliberate:
 
 - **Off by default.** `DEMO_ENABLED` must be set explicitly.
 - **Disabled returns 404, not 403** — a disabled demo should not advertise that it

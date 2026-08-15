@@ -59,6 +59,17 @@ class SttSettings:
     elevenlabs_api_key: str | None = None
     elevenlabs_model: str = "scribe_v1"
 
+    #: Path to a Google Cloud service-account JSON key file. None (the
+    #: default) skips the engine entirely — see stt/google_stt.py.
+    google_credentials_path: str | None = None
+    google_model: str = "latest_long"
+    #: Primary BCP-47 language. Google's `recognize` has no "auto-detect" like
+    #: Sarvam's "unknown" — the closest equivalent is naming the two languages
+    #: actually spoken and letting `alternative_language_codes` catch whichever
+    #: one isn't primary.
+    google_language: str = "hi-IN"
+    google_alternative_languages: tuple[str, ...] = ("en-IN",)
+
     request_timeout_s: int = 180
 
     #: Which engine `build_primary_transcriber` picks for production (Phase 3+).
@@ -93,6 +104,10 @@ class SttSettings:
             sarvam_language=os.getenv("SARVAM_LANG", "unknown"),
             elevenlabs_api_key=_optional("ELEVENLABS_API_KEY"),
             elevenlabs_model=os.getenv("ELEVENLABS_MODEL", "scribe_v1"),
+            google_credentials_path=_optional("GOOGLE_APPLICATION_CREDENTIALS"),
+            google_model=os.getenv("GOOGLE_STT_MODEL", "latest_long"),
+            google_language=os.getenv("GOOGLE_STT_LANGUAGE", "hi-IN"),
+            google_alternative_languages=_csv("GOOGLE_STT_ALT_LANGUAGES", "en-IN"),
             request_timeout_s=int(os.getenv("STT_TIMEOUT_S", "180")),
             engine=_optional("STT_ENGINE"),
             fallback_engine=_optional("STT_ENGINE_FALLBACK"),
@@ -168,14 +183,43 @@ class AgentSettings:
 
     # --- NVIDIA NIM / Nemotron ---
     nvidia_api_key: str | None = None
-    nemotron_model: str = "nvidia/nemotron-3-ultra-550b-a55b"
+    #: Not `nvidia/nemotron-3-ultra-550b-a55b`, which this was until it was
+    #: measured: on NVIDIA's hosted endpoint that model never answers at all —
+    #: it is listed in `/v1/models` but every `/chat/completions` call hangs
+    #: until the client gives up. The symptom is silence, not an error: the
+    #: SDK retries three times at 60s each, so a WhatsApp user waits three
+    #: minutes and then gets "Agent failed". This one answers in ~16s with a
+    #: correctly-formed tool call, which is what the payment flow needs.
+    #: (`nemotron-3-nano-30b-a3b` answers in 3s but emits malformed tool
+    #: arguments — fast and wrong is the worst option for money.)
+    nemotron_model: str = "nvidia/llama-3.3-nemotron-super-49b-v1.5"
     nvidia_base_url: str = "https://integrate.api.nvidia.com/v1"
+
+    # --- Google Gemini ---
+    #: ⚠️ On the *unpaid* tier Google uses prompts and responses to improve its
+    #: products, and human reviewers may read them — which here means payee
+    #: numbers, UPI IDs and amounts. The PIN is never exposed (the gate runs in
+    #: front of the agent), but the rest is. See agent/gemini_agent.py.
+    gemini_api_key: str | None = None
+    gemini_model: str = "gemini-3.6-flash"
+    #: Google's OpenAI-dialect endpoint, so no second SDK is needed. The
+    #: trailing slash matters — the SDK joins paths onto it.
+    gemini_base_url: str = "https://generativelanguage.googleapis.com/v1beta/openai/"
+
     #: Low, because picking the wrong tool or date is the failure that matters
-    #: here — variety is worth nothing. NVIDIA only; Claude rejects this.
+    #: here — variety is worth nothing. Rejected by Claude, accepted by the
+    #: OpenAI-compatible providers.
     temperature: float = 0.2
 
     # --- shared ---
-    max_tokens: int = 1024
+    #: 1024 was sized for the answer alone, which was right when no model
+    #: thought before replying. On the current Claude models adaptive thinking
+    #: is ON when `thinking` is unset, and `max_tokens` caps thinking **plus**
+    #: response text — so a reply that needs 80 tokens can still be truncated
+    #: mid-sentence by the thinking that preceded it. This is a ceiling, not a
+    #: spend: unused headroom costs nothing, a truncated payment confirmation
+    #: costs a demo.
+    max_tokens: int = 8192
     #: Ceiling on model turns per user message. A tool that keeps failing would
     #: otherwise loop until the bill notices.
     max_tool_turns: int = 6
@@ -195,10 +239,16 @@ class AgentSettings:
             effort=os.getenv("AGENT_EFFORT", "medium").strip().lower(),
             nvidia_api_key=_optional("NVIDIA_API_KEY"),
             nemotron_model=os.getenv(
-                "NEMOTRON_MODEL", "nvidia/nemotron-3-ultra-550b-a55b"
+                "NEMOTRON_MODEL", "nvidia/llama-3.3-nemotron-super-49b-v1.5"
             ),
             nvidia_base_url=os.getenv(
                 "NVIDIA_BASE_URL", "https://integrate.api.nvidia.com/v1"
+            ),
+            gemini_api_key=_optional("GEMINI_API_KEY"),
+            gemini_model=os.getenv("GEMINI_MODEL", "gemini-3.6-flash"),
+            gemini_base_url=os.getenv(
+                "GEMINI_BASE_URL",
+                "https://generativelanguage.googleapis.com/v1beta/openai/",
             ),
             temperature=float(os.getenv("AGENT_TEMPERATURE", "0.2")),
             max_tokens=int(os.getenv("AGENT_MAX_TOKENS", "1024")),
@@ -219,67 +269,22 @@ class AgentSettings:
         UI's header — should read this rather than `model`, which is
         Anthropic-specific.
         """
-        return self.nemotron_model if self.provider == "nemotron" else self.model
+        return {
+            "nemotron": self.nemotron_model,
+            "gemini": self.gemini_model,
+        }.get(self.provider, self.model)
 
     @property
     def is_configured(self) -> bool:
-        """True when the *selected* provider has its key."""
-        if self.provider == "nemotron":
-            return bool(self.nvidia_api_key)
-        return bool(self.api_key)
+        """True when the *selected* provider has its key.
 
-
-@dataclass(frozen=True)
-class AuthSettings:
-    """Who may use the bot (Phase 5).
-
-    Defaults to enabled with an empty allowlist, which denies everyone. That is
-    the safe failure: forgetting to configure auth locks the bot down rather than
-    opening it up.
-    """
-
-    enabled: bool = True
-    #: "number:role,number:role". A bare number gets `default_role`.
-    allowed_numbers: str = ""
-    #: Path to a file in the same "number:role" syntax, one entry per line
-    #: (comments after '#' allowed). When set, this is authoritative and
-    #: `allowed_numbers` above is ignored — see `FileBackedAccessPolicy`. Lets
-    #: a team that turns over often add/remove a number without a redeploy.
-    allowed_numbers_file: str = ""
-    default_role: str = "viewer"
-    #: Numbers that may run the allowlist commands in `auth/admin_flow.py`.
-    #: Deliberately env-only and never in `allowed_numbers_file`: if this list
-    #: lived in the file the commands can edit, a super-user could mint more
-    #: super-users from a phone, and one borrowed handset would be permanent.
-    #: A super-user must ALSO be on the allowlist — this grants no access of its
-    #: own, so a leaked list of super-user numbers is not a way in.
-    superuser_numbers: str = ""
-    #: Messages per caller per window.
-    rate_limit: int = 20
-    rate_limit_window_s: float = 3600.0
-
-    @classmethod
-    def from_env(cls) -> AuthSettings:
-        return cls(
-            enabled=_flag("AUTH_ENABLED", True),
-            allowed_numbers=os.getenv("WHATSAPP_ALLOWED_NUMBERS", ""),
-            allowed_numbers_file=os.getenv("WHATSAPP_ALLOWED_NUMBERS_FILE", ""),
-            default_role=os.getenv("AUTH_DEFAULT_ROLE", "viewer").strip().lower(),
-            superuser_numbers=os.getenv("WHATSAPP_SUPERUSER_NUMBERS", ""),
-            rate_limit=int(os.getenv("AUTH_RATE_LIMIT", "20")),
-            rate_limit_window_s=float(os.getenv("AUTH_RATE_LIMIT_WINDOW_S", "3600")),
-        )
-
-    @property
-    def superusers(self) -> frozenset[str]:
-        """Normalised, so a formatted number in `.env` still matches a webhook's."""
-        from .auth.policy import normalise_number
-
-        return frozenset(
-            normalise_number(entry)
-            for entry in self.superuser_numbers.split(",")
-            if normalise_number(entry)
-        )
+        Per-provider on purpose: a `GEMINI_API_KEY` left in `.env` from a trial
+        must not make an unconfigured Claude deployment look ready.
+        """
+        return bool({
+            "nemotron": self.nvidia_api_key,
+            "gemini": self.gemini_api_key,
+        }.get(self.provider, self.api_key))
 
 
 @dataclass(frozen=True)
@@ -321,6 +326,21 @@ class PaymentSettings:
     intent_ttl_s: float = 180.0
     #: Wrong PINs before the intent is cancelled and must be restated.
     max_pin_attempts: int = 3
+
+    #: How often to ask eko about transfers it accepted but has not settled.
+    #: 60s because a bank transfer resolves in seconds-to-minutes and each
+    #: inquiry is one cheap GET — the cost of asking is far below the cost of
+    #: a payer not knowing whether their money moved.
+    settlement_poll_interval_s: float = 60.0
+    #: How long to keep asking before giving up and saying so.
+    #:
+    #: Deliberately *not* a small number of attempts. An initiated transfer
+    #: cannot be recalled — eko has no cancel endpoint, and its refund API is
+    #: for already-failed cash transactions with customer OTP — so giving up
+    #: early does not stop the money, it only stops us watching it. Six hours of
+    #: cheap GETs is the price of being able to tell the payer what actually
+    #: happened.
+    settlement_give_up_after_s: float = 21_600.0
     #: Accepted PIN lengths, in the order they are tried.
     pin_lengths: tuple[int, ...] = (4, 6)
 
@@ -360,6 +380,12 @@ class PaymentSettings:
             ).strip().lower(),
             intent_ttl_s=float(os.getenv("PAYMENT_INTENT_TTL_S", "180")),
             max_pin_attempts=int(os.getenv("PAYMENT_MAX_PIN_ATTEMPTS", "3")),
+            settlement_poll_interval_s=float(
+                os.getenv("PAYMENT_SETTLEMENT_POLL_INTERVAL_S", "60")
+            ),
+            settlement_give_up_after_s=float(
+                os.getenv("PAYMENT_SETTLEMENT_GIVE_UP_AFTER_S", "21600")
+            ),
             pin_lengths=tuple(
                 int(n) for n in _csv("PAYMENT_PIN_LENGTHS", "4,6")
             ),
@@ -444,8 +470,24 @@ class EkoSettings:
     # --- merchant identity ---
     #: The BC/agent code eko issued.
     user_code: str | None = None
-    #: The initiating mobile registered with eko.
+    #: **No longer used to build `initiator_id`.** Kept only because removing
+    #: a settings field is a bigger change than leaving an unused one — every
+    #: transfer, inquiry and lookup now sends the WhatsApp payer's own number
+    #: as `initiator_id` instead (see `eko_gateway.py::_initiator_id_for`),
+    #: per an explicit instruction from the project owner: this is who is
+    #: actually initiating each transaction, not a single fixed merchant
+    #: identity. Not required at startup for this reason — see
+    #: `missing_fields`.
     initiator_id: str | None = None
+    #: eko's `customer_id` — a **fixed** value issued with the merchant
+    #: identity, not the recipient's number.
+    #:
+    #: It reads like a payee field and is not one. `customer_vpa` identifies
+    #: the receiving party; `customer_id` sits beside `user_code` and
+    #: `initiator_id` as part of who *we* are. Reading it as the payee's mobile
+    #: is what made this flow demand a phone number for every transfer and
+    #: refuse ordinary UPI IDs like `name@okicici` that carry none.
+    customer_id: str | None = None
     service_code: str = "86"
     interaction_type_id: str = "840"
     org_id: str = "1"
@@ -460,12 +502,62 @@ class EkoSettings:
     #: eko echoes the caller's IP back for its own fraud checks.
     source_ip: str = ""
     next_allowed_limit: str = "25000"
+    #: Sent as `recipient_name` when the payee could not be named. eko's own
+    #: working request carries a non-empty value here, and eko does not return
+    #: names (see `eko_gateway.resolve_payee`), so without this every real
+    #: transfer would send an empty one.
+    recipient_name: str = ""
 
     # --- endpoints, relative to base_url ---
     transfer_path: str = "/ekoicici/v1/request"
     #: Optional. Without it a payee has no name and the digits must be read back.
     verify_path: str = ""
     spent_today_path: str = ""
+    #: eko's Transaction Inquiry — the only way to learn whether an initiated
+    #: transfer settled, since eko publishes no webhook.
+    #:
+    #: **The LIVE endpoint, confirmed directly by eko on 2026-08-14** via a
+    #: real worked curl. Getting here took four attempts, each on a different
+    #: host or path than the last:
+    #:
+    #: 1. `eps.eko.in` — guessed from summarising the docs page's on-screen
+    #:    text. Wrong: it is eko's documentation *website*, not an API gateway
+    #:    — every path there returns HTTP 200 with an HTML page carrying a
+    #:    Google Tag Manager script, four calls running.
+    #: 2. `api.eko.in` — fell back to the transfer endpoint's host on the
+    #:    reasoning that it, at least, behaved like a real gateway (402
+    #:    "Authentication parameters missing" on every path, including
+    #:    nonsense ones). A defensible fallback, but still a guess — its
+    #:    auth-before-routing behaviour meant it could never confirm a path.
+    #: 3. `staging.eko.in/ekoapi/v3` — eko sent a working curl against it,
+    #:    which confirmed the request *shape* (`tid` as a query parameter, not
+    #:    a path segment — see below) but turned out to be sandbox-only: a
+    #:    real production TID came back "not found" here, and eko confirmed
+    #:    this host never sees production data.
+    #: 4. This value — `api.eko.in/ekoicici/v3/tools/reference/transaction`,
+    #:    eko's own worked curl against the live environment. Same host as
+    #:    the transfer endpoint, different path (`ekoicici/v3`, not the
+    #:    transfer's `ekoicici/v1`) and different again from the sandbox's
+    #:    `ekoapi/v3`.
+    #:
+    #: `GET {inquiry_base_url}{inquiry_path}?tid={tid}&initiator_id=…` — `tid`
+    #: is a **query parameter**, not a path segment; confirmed against the
+    #: sandbox host in attempt 3 above and carried forward here. Set
+    #: `inquiry_path` to "" to switch settlement polling off entirely.
+    inquiry_base_url: str = "https://api.eko.in/ekoicici/v3"
+    inquiry_path: str = "/tools/reference/transaction"
+    #: **No longer used.** eko's own worked sandbox curl used `9911572989`
+    #: here as a fixed value, which is what this field held. Superseded by
+    #: the same per-payer `initiator_id` change as the transfer path — see
+    #: `EkoSettings.initiator_id` — so `inquire()` now derives it from
+    #: whichever payer the settlement belongs to instead of reading this.
+    #: Kept only so nothing that still references the setting by name breaks.
+    inquiry_initiator_id: str = "9911572989"
+    #: eko's docs confirm the inquiry endpoint wants `secret-key` /
+    #: `secret-key-timestamp` (hyphenated) where the transfer endpoint takes
+    #: `secret_key` / `secret_key_timestamp` (underscored). Both are sent
+    #: either way — an extra unread header is harmless, a missing one is a 401.
+    inquiry_hyphenated_headers: bool = True
 
     # --- where things live in eko's responses (dotted paths) ---
     field_status: str = "status"
@@ -475,8 +567,29 @@ class EkoSettings:
     field_payee_vpa: str = "data.customer_vpa"
     field_payee_known: str = "data.is_verified"
     field_spent_today: str = "data.used_limit"
-    #: Status values that mean the transfer went through.
+    #: Status values that mean eko **accepted the request**. Not the same thing
+    #: as the money arriving — see `field_tx_status` below.
     success_statuses: tuple[str, ...] = ("0", "success")
+
+    #: Where the *money's* outcome lives, as opposed to the API call's.
+    #:
+    #: These are two different questions and eko answers them in two different
+    #: fields. `status: 0` only means "request accepted"; a real transfer came
+    #: back with `status: 0`, `message: "Transaction Initiated"` and
+    #: `tx_status: "2"`, was reported to the sender as done, and then reversed.
+    #:
+    #: eko's full documented table (eps.eko.in/docs/transaction-inquiry):
+    #: `0` success · `1` fail · `2` response awaited/initiated · `3` refund
+    #: pending · `4` refunded · `5` hold (inquiry required). Their own rule:
+    #: "a transaction must not be treated as declined/failed" on a timeout —
+    #: inquire instead of retrying, which is exactly what `agent/settlement.py`
+    #: does. `4` (refunded) counts as failed here: the money went out and came
+    #: back, so from the payer's side the transfer did not happen. `2`, `3`
+    #: and `5` are not listed in either tuple, so they fall through to
+    #: "pending" by default — no separate list needed for them.
+    field_tx_status: str = "data.tx_status"
+    settled_tx_statuses: tuple[str, ...] = ("0",)
+    failed_tx_statuses: tuple[str, ...] = ("1", "4")
 
     # --- reporting: same envelope, different codes ---
     #: eko dispatches on one endpoint and selects the operation with codes, so the
@@ -512,6 +625,7 @@ class EkoSettings:
             timeout_s=int(os.getenv("EKO_TIMEOUT_S", "30")),
             user_code=_optional("EKO_USER_CODE"),
             initiator_id=_optional("EKO_INITIATOR_ID"),
+            customer_id=_optional("EKO_CUSTOMER_ID"),
             service_code=os.getenv("EKO_SERVICE_CODE", "86"),
             interaction_type_id=os.getenv("EKO_INTERACTION_TYPE_ID", "840"),
             org_id=os.getenv("EKO_ORG_ID", "1"),
@@ -523,9 +637,16 @@ class EkoSettings:
             latlong=os.getenv("EKO_LATLONG", ""),
             source_ip=os.getenv("EKO_SOURCE_IP", ""),
             next_allowed_limit=os.getenv("EKO_NEXT_ALLOWED_LIMIT", "25000"),
+            recipient_name=os.getenv("EKO_RECIPIENT_NAME", ""),
             transfer_path=os.getenv("EKO_TRANSFER_PATH", "/ekoicici/v1/request"),
             verify_path=os.getenv("EKO_VERIFY_PATH", ""),
             spent_today_path=os.getenv("EKO_SPENT_TODAY_PATH", ""),
+            inquiry_base_url=os.getenv(
+                "EKO_INQUIRY_BASE_URL", "https://api.eko.in/ekoicici/v3"
+            ),
+            inquiry_path=os.getenv("EKO_INQUIRY_PATH", "/tools/reference/transaction"),
+            inquiry_initiator_id=os.getenv("EKO_INQUIRY_INITIATOR_ID", "9911572989"),
+            inquiry_hyphenated_headers=_flag("EKO_INQUIRY_HYPHENATED_HEADERS", True),
             field_status=os.getenv("EKO_FIELD_STATUS", "status"),
             field_message=os.getenv("EKO_FIELD_MESSAGE", "message"),
             field_reference=os.getenv("EKO_FIELD_REFERENCE", "data.tid"),
@@ -534,6 +655,9 @@ class EkoSettings:
             field_payee_known=os.getenv("EKO_FIELD_PAYEE_KNOWN", "data.is_verified"),
             field_spent_today=os.getenv("EKO_FIELD_SPENT_TODAY", "data.used_limit"),
             success_statuses=_csv("EKO_SUCCESS_STATUSES", "0,success"),
+            field_tx_status=os.getenv("EKO_FIELD_TX_STATUS", "data.tx_status"),
+            settled_tx_statuses=_csv("EKO_SETTLED_TX_STATUSES", "0"),
+            failed_tx_statuses=_csv("EKO_FAILED_TX_STATUSES", "1,4"),
             report_path=os.getenv("EKO_REPORT_PATH", "/ekoicici/v1/request"),
             report_interaction_type_id=os.getenv("EKO_REPORT_INTERACTION_TYPE_ID", ""),
             report_count_code=os.getenv("EKO_REPORT_COUNT_CODE", ""),
@@ -553,7 +677,7 @@ class EkoSettings:
             intent_ttl_s=float(os.getenv("PAYMENT_INTENT_TTL_S", "180")),
         )
 
-    def missing_fields(self) -> list[str]:
+    def missing_fields(self, *, for_transfers: bool = False) -> list[str]:
         """What still has to be filled in before this can transact.
 
         Returned as a list rather than a bool so the error names the gap — a
@@ -564,15 +688,30 @@ class EkoSettings:
         deliberately not required here — eko's platform team confirmed the
         `developer_key`/`secret_key`/`secret_key_timestamp` headers must always
         be *present*, but an empty value is fine. See `eko_auth_headers`.
+
+        `EKO_INITIATOR_ID` is also not required — `initiator_id` is now
+        derived per-payer at call time (`eko_gateway.py::_initiator_id_for`),
+        not read from settings, so there is nothing here to validate.
+
+        `EKO_USER_CODE` and `EKO_CUSTOMER_ID` are also not required, per an
+        explicit instruction from the project owner (2026-08-15): both vary
+        with `initiator_id` and there is currently no source to derive the
+        right value per payer, so empty values are sent deliberately — to
+        find out whether eko's API accepts them the same way it accepts an
+        empty `developer_key`/`auth_key`/`secret_key`, rather than refusing
+        to try. A missing `EKO_CUSTOMER_ID` used to be required only
+        `for_transfers`; that parameter is kept on the signature for callers
+        that still pass it, but no longer changes what is checked.
         """
-        required = {
-            "EKO_BASE_URL": self.base_url,
-            "EKO_USER_CODE": self.user_code,
-            "EKO_INITIATOR_ID": self.initiator_id,
-            # eko rejects a transfer with no location.
-            "EKO_LATLONG": self.latlong,
-        }
-        return [name for name, value in required.items() if not value]
+        return [
+            name
+            for name, value in {
+                "EKO_BASE_URL": self.base_url,
+                # eko rejects a transfer with no location.
+                "EKO_LATLONG": self.latlong,
+            }.items()
+            if not value
+        ]
 
     def missing_report_fields(self) -> list[str]:
         """What the reporting source still needs.
@@ -639,17 +778,43 @@ class DemoSettings:
 
 
 @dataclass(frozen=True)
+class OpsSettings:
+    """The `/ops` activity page — who called what API, and when.
+
+    Off by default, and even when on, every route refuses to answer without
+    `OPS_TOKEN` matching. Unlike `/demo`, this reads *real* traffic — real
+    phone numbers, real payment attempts — so there is no equivalent of demo's
+    "unauthenticated is fine, it's all fake data anyway" fallback.
+    """
+
+    enabled: bool = False
+    token: str | None = None
+    #: Recent events returned per source (app log, payment audit trail) on each
+    #: request. Bounded so one browser tab left open cannot make every poll
+    #: re-read an ever-growing audit file.
+    tail_limit: int = 300
+
+    @classmethod
+    def from_env(cls) -> OpsSettings:
+        return cls(
+            enabled=_flag("OPS_ENABLED", False),
+            token=_optional("OPS_TOKEN"),
+            tail_limit=int(os.getenv("OPS_TAIL_LIMIT", "300")),
+        )
+
+
+@dataclass(frozen=True)
 class Settings:
     """Root settings object. Later phases extend this with their own sections."""
 
     stt: SttSettings = field(default_factory=SttSettings)
     whatsapp: WhatsAppSettings = field(default_factory=WhatsAppSettings)
     agent: AgentSettings = field(default_factory=AgentSettings)
-    auth: AuthSettings = field(default_factory=AuthSettings)
     payments: PaymentSettings = field(default_factory=PaymentSettings)
     groups: GroupSettings = field(default_factory=GroupSettings)
     eko: EkoSettings = field(default_factory=EkoSettings)
     demo: DemoSettings = field(default_factory=DemoSettings)
+    ops: OpsSettings = field(default_factory=OpsSettings)
     #: Shared state for a deployment with more than one worker. Empty means
     #: in-process, which is correct for one worker and only one.
     redis_url: str | None = None
@@ -678,11 +843,11 @@ class Settings:
             stt=SttSettings.from_env(),
             whatsapp=WhatsAppSettings.from_env(),
             agent=AgentSettings.from_env(),
-            auth=AuthSettings.from_env(),
             payments=PaymentSettings.from_env(),
             groups=GroupSettings.from_env(),
             eko=EkoSettings.from_env(),
             demo=DemoSettings.from_env(),
+            ops=OpsSettings.from_env(),
             redis_url=_optional("REDIS_URL"),
             workers=int(os.getenv("WEB_CONCURRENCY", "1")),
             data_dir=Path(os.getenv("DATA_DIR", str(PROJECT_ROOT / "data"))),

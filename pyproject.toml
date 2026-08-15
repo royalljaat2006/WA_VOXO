@@ -17,6 +17,7 @@ dependencies = [
 stt = [
     "faster-whisper>=1.0.0",
     "openai>=1.40.0",
+    "google-cloud-speech>=2.26.0",
 ]
 # Phase 2 — the webhook server that receives messages from Meta.
 server = [
@@ -27,6 +28,10 @@ server = [
 # Phase 4 — the LLM agent.
 agent = [
     "anthropic>=0.40.0",
+]
+# Shared state across more than one worker — see store.py::RedisStore.
+redis = [
+    "redis>=5.0.0",
 ]
 dev = [
     "pytest>=8.0.0",

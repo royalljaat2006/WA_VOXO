@@ -8,10 +8,10 @@ call, so the system can be demonstrated today.
 It also returns per-stage timings, which WhatsApp cannot show — useful for
 explaining where the seconds actually go.
 
-⚠️ **This bypasses the WhatsApp allowlist**, because an HTTP caller has no verified
-phone number to check. It is therefore OFF by default, refuses to serve unless
-`DEMO_ENABLED=true`, and supports a shared token. Never enable it on a deployment
-that reaches real data.
+⚠️ An HTTP caller here has no verified phone number at all — every session gets a
+synthetic `demo:<session_id>` identity (see `_become_demo_caller`), never a real
+one. It is therefore OFF by default, refuses to serve unless `DEMO_ENABLED=true`,
+and supports a shared token. Never enable it on a deployment that reaches real data.
 """
 
 from __future__ import annotations
@@ -31,7 +31,6 @@ from .. import audio as audio_utils
 from ..agent import Agent, AgentError
 from ..agent.payment_flow import PaymentFlow
 from ..agent.payments import ContactBook, current_payer
-from ..auth.policy import Caller, Role, current_caller
 from ..config import Settings
 from ..stt import Transcriber, TranscriptionError
 
@@ -48,17 +47,9 @@ def _payer_for(session_id: str) -> str:
 
 
 def _become_demo_caller(session_id: str) -> str:
-    """Establish who this request is from, and let them pay.
-
-    The demo has no verified phone number, so it grants itself the payment
-    capability that WhatsApp callers must be given explicitly via "+pay". That is
-    consistent with what the demo already is — a documented bypass of the
-    allowlist, off by default, warned about at startup — and it stays honest
-    because the gateway behind it moves no money.
-    """
+    """Establish who this request is from."""
     payer = _payer_for(session_id)
     current_payer.set(payer)
-    current_caller.set(Caller(number=payer, role=Role.ADMIN, can_pay=True))
     return payer
 
 
@@ -144,7 +135,6 @@ class DemoStatus(BaseModel):
     speech_engine: str
     model: str
     stub_data: bool
-    auth_enabled: bool
     #: Whether the payment flow is wired up at all, and whether it is the stub.
     payments_enabled: bool = False
     real_money: bool = False
@@ -224,7 +214,6 @@ def create_demo_router(deps: DemoDeps) -> APIRouter:
             ),
             model=s.agent.active_model if deps.agent else "not configured",
             stub_data=s.agent.data_source == "stub",
-            auth_enabled=s.auth.enabled,
             payments_enabled=deps.flow is not None,
             real_money=s.payments.moves_real_money,
         )

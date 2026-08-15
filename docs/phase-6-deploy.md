@@ -7,25 +7,28 @@ stable HTTPS URL, and answers a voice note.
 
 ---
 
-## ⚠️ Read this before scaling: everything stateful is per-process
+## ⚠️ Read this before scaling: not everything stateful is shared yet
 
-Three phases each added in-memory state, and each noted it as a deployment
-prerequisite. Here they are together, because they share one fix:
+Several phases added in-memory state. The payment-critical ones are now
+store-backed — safe across N workers **once `REDIS_URL` is set** — but a few
+lower-severity ones still are not:
 
-| State | Where | What breaks with N workers |
-|---|---|---|
-| Deduplication (`SeenMessages`) | `whatsapp/app.py` | Each worker has its own set, so a Meta retry landing on a different worker is processed again — **the user gets two replies to one voice note** |
-| Conversation history (`ConversationStore`) | `agent/conversation.py` | Follow-ups land on whichever worker answers, so "aur kal?" loses its context roughly `(N-1)/N` of the time |
-| Rate limiting (`SlidingWindowRateLimiter`) | `auth/rate_limit.py` | Each worker counts separately, so the effective limit is **`limit × N`** |
+| State | Where | With `REDIS_URL` set | Without it (N workers, no Redis) |
+|---|---|---|---|
+| Deduplication (`SeenMessages`) | `whatsapp/app.py` | ✅ Shared | Each worker has its own set — Meta's retry is processed twice, **the user gets two replies to one voice note** |
+| Pending intents (`PendingIntents`) | `agent/payments.py` | ✅ Shared | Worker A prepares the transfer, worker B gets the PIN and finds nothing pending — **the payment simply does not work** |
+| Settlement tracking (`SettlementQueue`) | `agent/settlement.py` | ✅ Shared | A transfer eko accepted is never followed up on if the worker tracking it restarts or a later poll lands elsewhere |
+| Shared contacts (`ContactBook`) | `agent/payments.py` | ❌ Still per-process | A shared contact is not recognised on another worker, so the digits get read back unnecessarily. Annoying, not unsafe |
+| Group wakefulness (`GroupRegistry`) | `whatsapp/group_handler.py` | ❌ Still per-process | A woken group looks dormant to another worker |
+| Conversation history (`ConversationStore`) | `agent/conversation.py` | ❌ Still per-process | Follow-ups land on whichever worker answers, so "aur kal?" loses its context roughly `(N-1)/N` of the time |
 
-**Therefore: run exactly one worker.** The Dockerfile pins `--workers 1` for this
-reason, and it is not an oversight to be tuned away. One worker handles a
-demo and a pilot comfortably — the slow work is already off the request path in a
-background task.
-
-**To scale beyond one worker**, all three need shared state (Redis is the obvious
-choice; all three are small interfaces). Do that deliberately as its own piece of
-work, not by raising the worker count and hoping.
+`guard_worker_count` refuses to start with `WEB_CONCURRENCY>1` and no
+`REDIS_URL` at all — it cannot tell that the three shared-safe ones are fine
+and only the bottom three degrade, so it fails closed on the worst case.
+**Setting `REDIS_URL` makes N workers safe for money and for deduplication.**
+The remaining three are a real but lower-severity gap: features work, they
+just occasionally forget who they were talking to. Migrating them follows the
+same store-backed pattern `PendingIntents`/`SettlementQueue` already use.
 
 ---
 
@@ -50,7 +53,7 @@ The health response tells you what is actually running:
 {
   "status": "ok",
   "handler": "AgentHandler",
-  "auth_enabled": true,
+  "access_control": "none",
   "signature_verification": true,
   "stub_data": true
 }
@@ -99,8 +102,10 @@ defaults it), plus:
 PORT=8000                 # most platforms inject this
 LOG_LEVEL=INFO
 WHATSAPP_APP_SECRET=...   # REQUIRED here — the endpoint is public
-WHATSAPP_ALLOWED_NUMBERS=...
 ```
+
+There is no allowlist — every number that reaches the deployed URL is
+answered, payments included. See [phase-5-auth.md](phase-5-auth.md).
 
 `WHATSAPP_APP_SECRET` is optional locally and **mandatory** in a deployment: it is
 what makes signature verification possible. The health endpoint reports
@@ -161,21 +166,25 @@ pipeline would be scaffolding nobody has asked for yet.
 ## Before a real launch
 
 - [ ] `WHATSAPP_APP_SECRET` set, and `/health` confirms `signature_verification: true`
-- [ ] `WHATSAPP_ALLOWED_NUMBERS` populated; `auth_enabled: true`
+- [ ] Aware that `/health` reports `access_control: "none"` — there is no allowlist
+      (see [phase-5-auth.md](phase-5-auth.md)); anyone who finds the number can
+      attempt a payment, up to the amount caps
 - [ ] A **permanent** access token (System User), not a 24-hour temporary one — see
       [phase-1-meta-setup.md](phase-1-meta-setup.md)
 - [ ] `stub_data: false` — a real `CampaignDataSource` is in place
 - [ ] Business verification done, if a real phone number is wanted rather than the
       test number (allow 1–2 weeks)
-- [ ] One worker, or shared state implemented for all three stores above
+- [ ] One worker, or `REDIS_URL` set (`guard_worker_count` refuses to start
+      otherwise) — see the table at the top of this document for what is and
+      is not shared once Redis is in place
 
 ---
 
 ## Known limits
 
-- **Single worker**, per the top of this document.
-- **No persistence.** A restart forgets conversations, dedup history, and rate
-  limits. Acceptable for a pilot; the fix is the same shared store.
+- **`ContactBook`, `GroupRegistry` and `ConversationStore` are still per-process**
+  even with Redis configured — see the table at the top of this document. They
+  degrade rather than break.
 - **No alerting.** Failures land in logs, and nothing pages anyone.
 - **Model weights download on first run** if `STT_ENGINE` falls back to local
   Whisper (e.g. `SARVAM_API_KEY` missing), which makes the first container start
