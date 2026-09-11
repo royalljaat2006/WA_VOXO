@@ -1,0 +1,49 @@
+=== full status ===
+{
+  "Version": "1.102.2-t6cac91817-g6ff0ddc72",
+  "TUN": true,
+  "BackendState": "Running",
+  "HaveNodeKey": true,
+  "AuthURL": "",
+  "TailscaleIPs": [
+    "100.127.200.32",
+    "fd7a:115c:a1e0::6635:c821"
+  ],
+  "Self": {
+    "ID": "nZYBG8AF5j11CNTRL",
+    "NodeID": 5388020319911030,
+    "PublicKey": "nodekey:f567af370c78e6463fd34cb36c3683f0177e42598a01fa09a15890a3663fc820",
+    "HostName": "openclaw-PowerEdge-R730",
+    "DNSName": "openclaw-poweredge-r730.tailb276af.ts.net.",
+    "OS": "linux",
+    "UserID": 6607991955909011,
+    "TailscaleIPs": [
+      "100.127.200.32",
+      "fd7a:115c:a1e0::6635:c821"
+    ],
+    "AllowedIPs": [
+      "100.127.200.32/32",
+      "fd7a:115c:a1e0::6635:c821/128"
+    ],
+    "Addrs": [
+      "122.176.147.78:41641",
+      "172.17.0.1:41641",
+      "172.18.0.1:41641",
+      "172.19.0.1:41641",
+      "172.20.0.1:41641",
+      "172.21.0.1:41641",
+      "172.22.0.1:41641",
+      "192.168.1.10:41641"
+    ],
+    "CurAddr": "",
+    "Relay": "blr",
+    "PeerRelay": "",
+    "RxBytes": 0,
+
+=== DNS name ===
+
+=== serve/funnel status ===
+No serve config
+
+=== funnel status ===
+No serve config

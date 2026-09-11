@@ -1,0 +1,15 @@
+Available on the internet:
+
+https://openclaw-poweredge-r730.tailb276af.ts.net/
+|-- proxy http://127.0.0.1:8003
+
+Funnel started and running in the background.
+To disable the proxy, run: tailscale funnel --https=443 off
+---status---
+
+# Funnel on:
+#     - https://openclaw-poweredge-r730.tailb276af.ts.net
+
+https://openclaw-poweredge-r730.tailb276af.ts.net (Funnel on)
+|-- / proxy http://127.0.0.1:8003
+

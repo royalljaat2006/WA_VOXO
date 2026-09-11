@@ -1,0 +1,38 @@
+=== grep -rL (follow symlinks) for listen 5050 ===
+
+sudo: no password was provided
+sudo: a password is required
+
+=== brute: check every sites-available file for 5050 ===
+MATCH: /etc/nginx/sites-available/default
+MATCH: /etc/nginx/sites-available/default.bak-claude-20260827-153904
+
+=== check the external eko-csp-monitor file ===
+# Example nginx config for this project on your rack server.
+# Copy this into your nginx sites config (e.g. /etc/nginx/sites-available/),
+# then symlink it into sites-enabled and reload nginx.
+#
+# WHAT TO EDIT BEFORE USING:
+#   1. server_name  -> your rack server's actual domain or IP
+#   2. root         -> the actual path to this project's frontend/ folder
+#                      on the rack server (wherever you put the repo)
+
+server {
+    listen 5050;
+    server_name 122.176.147.78;
+
+    # The dashboard - served directly by nginx as static files
+    location / {
+        root /home/PRANJAL/eko_csp_loacl_agent/csp-agent-monitor/frontend;
+    }
+
+    # The backend - proxied to the Docker container (docker-compose.yml
+    # maps it to localhost:8000 on this same machine)
+    location /api/ {
+        proxy_pass http://127.0.0.1:9000/api/;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+    }
+}

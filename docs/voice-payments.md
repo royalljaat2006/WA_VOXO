@@ -415,6 +415,21 @@ Measured on this flow, three runs each, same prompt and tools:
 > table.** A hosted model's availability and speed are not properties of this
 > codebase, and both have already changed once under it.
 
+> **Third measurement, 2026-08-15**, live A/B on the deployed rack server via
+> `/demo/ask` (a reporting question, a payment-prep question, and a
+> general-knowledge question — three runs each for `llama-3.3-nemotron-super-49b-v1.5`
+> via `/demo/voice`, one run each for the other two via text):
+>
+> | Model | Time | Tool call |
+> |---|---|---|
+> | `llama-3.3-nemotron-super-49b-v1.5` (previous default) | 15–53s (avg ~30s) | ✅ correct, but far too slow for a chat interface |
+> | `nemotron-3-nano-30b-a3b` | 1.5–19.5s | ❌ **confirmed broken for payments** — 0 tool calls on "Ramesh ko 100 rupaye bhejo, uska number hai 9876543210", raw chain-of-thought reasoning leaked verbatim into the WhatsApp reply instead of calling `prepare_transfer`. Do not use for payments regardless of speed. |
+> | `nemotron-3-super-120b-a12b` (**new default**) | 3.2–19.4s (avg ~9.4s) | ✅ correct and safe on every test, including asking for a proper UPI ID rather than misusing a bare phone number |
+>
+> Again: **re-measure before trusting this table too** — NVIDIA's hosted
+> endpoints have already changed twice under this codebase without a code
+> change on either side.
+
 Switching is one line, e.g. `NEMOTRON_MODEL=nvidia/nemotron-3-super-120b-a12b`.
 
 ## Testing it

@@ -1,0 +1,52 @@
+=== nginx sites-enabled ===
+total 12
+drwxr-xr-x 2 root root 4096 Sep 10 15:24 .
+drwxr-xr-x 9 root root 4096 Aug 26 12:44 ..
+lrwxrwxrwx 1 root root   39 Aug 18 13:52 bank-tracker -> /etc/nginx/sites-available/bank-tracker
+lrwxrwxrwx 1 root root   40 Jul  3 13:05 csp-dashboard -> /etc/nginx/sites-available/csp-dashboard
+lrwxrwxrwx 1 root root   85 Sep 10 15:24 eko-csp-monitor.conf -> /home/PRANJAL/eko_csp_loacl_agent/csp-agent-monitor/deploy/nginx/eko-csp-monitor.conf
+lrwxrwxrwx 1 root root   36 Aug 24 13:58 eko-kiosk -> /etc/nginx/sites-available/eko-kiosk
+lrwxrwxrwx 1 root root   46 Aug 24 12:40 orchestrator-public -> /etc/nginx/sites-available/orchestrator-public
+lrwxrwxrwx 1 root root   39 Aug 24 23:11 orders-kiosk -> /etc/nginx/sites-available/orders-kiosk
+
+=== nginx conf.d ===
+total 52
+drwxr-xr-x 2 root root 4096 Aug 25 17:25 .
+drwxr-xr-x 9 root root 4096 Aug 26 12:44 ..
+-rw-r--r-- 1 root root   93 Aug  7 15:00 00-wa-issue-fetcher-upgrade-map.conf
+-rw-r--r-- 1 root root   66 Aug 25 17:25 orch_ratelimit.conf
+-rw-r--r-- 1 root root 3504 Aug 24 14:39 recon.conf
+-rw-r--r-- 1 root root  668 Aug  7 15:00 recon.conf.bak
+-rw-r--r-- 1 root root 3406 Aug  7 15:00 recon.conf.bak-1786095010
+-rw-r--r-- 1 root root 2138 Jun 29 15:22 recon.conf.bak-absredirect
+-rw-r--r-- 1 root root  647 Aug  7 15:00 recon.conf.bak.bak-1786095010
+-rw-r--r-- 1 root root 2412 Jul  2 12:25 recon.conf.bak-claw-20260703-194155
+-rw-r--r-- 1 root root 2496 Aug  5 16:04 recon.conf.bak.claw-20260805160425
+-rw-r--r-- 1 root root 3467 Aug 24 14:39 recon.conf.bak-eko-kiosk-20260824143927
+-rw-r--r-- 1 root root 2192 Jul  2 12:25 recon.conf.bak-nocache
+
+=== main nginx.conf includes ===
+5:include /etc/nginx/modules-enabled/*.conf;
+26:	include /etc/nginx/mime.types;
+59:	include /etc/nginx/conf.d/*.conf;
+60:	include /etc/nginx/sites-enabled/*;
+
+=== search all nginx configs for 8003 or wa-voxo ===
+
+=== search for default server / catch-all ===
+/etc/nginx/sites-available/csp-dashboard.bak-20260818
+/etc/nginx/sites-available/csp-dashboard.bak-claude-20260722-tvdashboard
+/etc/nginx/sites-available/default
+/etc/nginx/sites-available/csp-dashboard.bak-claude-20260819-spa-fallback
+/etc/nginx/sites-available/csp-dashboard
+/etc/nginx/sites-available/csp-dashboard.bak-claude-20260819-corpus-api
+/etc/nginx/sites-available/csp-dashboard.bak-claw-20260703-194920
+/etc/nginx/sites-available/csp-dashboard.bak-claude-20260827-154637
+/etc/nginx/sites-available/csp-dashboard.bak.20260805153415
+/etc/nginx/sites-available/csp-dashboard.bak-claude-20260818-csp-growth-platform
+/etc/nginx/sites-available/default.bak-claude-20260827-153904
+/etc/nginx/sites-available/csp-dashboard.bak.eko.1786711841
+/etc/nginx/sites-available/csp-dashboard.bak-ocr
+/etc/nginx/sites-available/csp-dashboard.bak-claude-20260827-161330
+/etc/nginx/sites-available/csp-dashboard.bak-claude-20260710-175812
+/etc/nginx/sites-available/csp-dashboard.bak.20260824121933

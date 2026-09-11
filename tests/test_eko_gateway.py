@@ -11,9 +11,11 @@ import logging
 
 import pytest
 
+from whatsapp_voice.agent import eko_gateway as eko_gateway_module
 from whatsapp_voice.agent.eko_gateway import (
     EkoPaymentGateway,
     _client_ref_id,
+    _curl_get,
     _is_pin_failure,
     _rupees,
 )
@@ -97,7 +99,10 @@ class FakeSession:
 
 @pytest.fixture
 def payee():
-    return Payee(phone="9002331157", resolved_name="RAM", source=PayeeSource.DIRECTORY)
+    return Payee(
+        phone="9002331157", vpa="9002331157@upi",
+        resolved_name="RAM", source=PayeeSource.DIRECTORY,
+    )
 
 
 def gateway(session=None, curl_get=None, **overrides):
@@ -343,6 +348,31 @@ class TestTheRequestAndResponseAreLogged:
 
         assert session.last_body["recipient_name"] == "RAM"
 
+    def test_the_name_the_payer_stated_is_sent(self):
+        """The real path. eko rejected a live ₹10 transfer with status 1449
+        "Invalid Recipient Name" because this field went out empty: eko has no
+        payee-name lookup, and no fallback was configured. `prepare_transfer`
+        now requires the payer to supply the name, and this is where it lands."""
+        session = FakeSession()
+        gw = EkoPaymentGateway(settings(recipient_name=""), session)
+        stated = Payee(
+            phone="9002331157", stated_name="Ramesh Kumar", source=PayeeSource.DICTATED
+        )
+        gw.confirm_and_execute(gw.prepare_transfer(PAYER, stated, 100_000), "5353")
+
+        assert session.last_body["recipient_name"] == "Ramesh Kumar"
+
+    def test_a_verified_name_still_beats_a_merely_stated_one(self):
+        session = FakeSession()
+        gw = gateway(session)
+        both = Payee(
+            phone="9002331157", resolved_name="RAM", stated_name="Ramesh Kumar",
+            source=PayeeSource.DIRECTORY,
+        )
+        gw.confirm_and_execute(gw.prepare_transfer(PAYER, both, 100_000), "5353")
+
+        assert session.last_body["recipient_name"] == "RAM"
+
     def test_sends_ekos_three_auth_headers(self, payee):
         session = FakeSession()
         gw = gateway(session)
@@ -390,7 +420,10 @@ class TestRecipientIdAndVpa:
 
         assert session.last_body["recipient_id_type"] == "mobile_number"
 
-    def test_no_vpa_means_no_customer_vpa_field(self, payee):
+    def test_no_vpa_means_no_customer_vpa_field(self):
+        payee = Payee(
+            phone="9002331157", vpa=None, resolved_name="RAM", source=PayeeSource.DIRECTORY,
+        )
         session = FakeSession()
         gw = gateway(session)
         gw.confirm_and_execute(gw.prepare_transfer(PAYER, payee, 100_000), "5353")
@@ -716,6 +749,59 @@ class FakeCurlGet:
         return self._response
 
 
+class TestCurlActuallySendsEmptyHeaders:
+    """The bug that made every inquiry fail, and cost weeks of misdirection.
+
+    eko wants `developer_key` / `secret_key` / `secret_key_timestamp` present
+    but empty. Given `-H "developer_key: "` curl **drops the header entirely**
+    rather than sending it empty, so every request went out with no
+    credentials and eko answered — accurately — `402 "Authentication
+    parameters missing"`. That message was read as an eko-side fault and
+    chased through four hosts, an IP-allowlisting theory and a clock-skew
+    check before `curl -v` showed the headers were never on the wire.
+
+    These tests inspect the argv itself, because `FakeCurlGet` replaces this
+    function everywhere else and so can never catch a fault inside it.
+    """
+
+    def _argv(self, monkeypatch, headers):
+        seen = {}
+
+        class Result:
+            returncode = 0
+            stdout = b'{"status":"0"}\n__EKO_CURL_HTTP_STATUS__200'
+            stderr = b""
+
+        def fake_run(args, **kwargs):
+            seen["args"] = args
+            return Result()
+
+        monkeypatch.setattr(eko_gateway_module.subprocess, "run", fake_run)
+        _curl_get("https://api.eko.in/x", {"tid": "1"}, headers, 30)
+        return seen["args"]
+
+    def test_an_empty_header_uses_the_semicolon_form(self, monkeypatch):
+        argv = self._argv(monkeypatch, {"developer_key": ""})
+        assert "developer_key;" in argv
+        assert "developer_key: " not in argv
+
+    def test_a_populated_header_still_uses_the_colon_form(self, monkeypatch):
+        argv = self._argv(monkeypatch, {"secret_key_timestamp": "1786821554936"})
+        assert "secret_key_timestamp: 1786821554936" in argv
+
+    def test_every_header_eko_requires_reaches_the_command(self, monkeypatch):
+        """Empty or not, all three have to be on the wire — that is eko's
+        stated contract, and the whole point of the fix."""
+        argv = self._argv(monkeypatch, {
+            "developer_key": "",
+            "secret_key": "",
+            "secret_key_timestamp": "1786821554936",
+        })
+        joined = " ".join(argv)
+        for header in ("developer_key", "secret_key", "secret_key_timestamp"):
+            assert header in joined
+
+
 class TestInquiry:
     """eko has no webhook, so this is the only way to learn a transfer's fate."""
 
@@ -850,6 +936,77 @@ class TestInquiry:
             gateway(curl_get=FakeCurlGet(), inquiry_path="").inquire("TXN00001", PAYER)
 
 
+class TestUserCodeIsPairedWithTheInitiator:
+    """eko files each transaction under the initiator's own `user_code`, so the
+    two travel together. Sending an empty one for a real initiator came back
+    `status 1297 — "This user does not exist"` on a live transfer (2026-08-17).
+
+    There is no lookup API for the pairing yet, so it is configuration.
+    """
+
+    REGISTERED = "919911572989"   # → 20810118 in the default table
+    UNREGISTERED = "919000000001"
+
+    def test_the_payers_own_code_is_sent_not_the_configured_default(self, payee):
+        session = FakeSession()
+        gw = EkoPaymentGateway(settings(user_code="SHOULD-NOT-BE-USED"), session)
+        gw.confirm_and_execute(gw.prepare_transfer(self.REGISTERED, payee, 100_000), "5353")
+
+        assert session.last_body["user_code"] == "20810118"
+
+    def test_each_registered_initiator_gets_its_own_code(self, payee):
+        """The whole point of the table: one code per initiator, not one
+        shared merchant code."""
+        seen = {}
+        for payer, expected in (("918287151832", "44070001"), ("919810118586", "20810001")):
+            session = FakeSession()
+            gw = EkoPaymentGateway(settings(user_code=None), session)
+            gw.confirm_and_execute(gw.prepare_transfer(payer, payee, 100_000), "5353")
+            seen[payer] = session.last_body["user_code"]
+            assert seen[payer] == expected
+        assert len(set(seen.values())) == 2, "two initiators shared one user_code"
+
+    def test_user_code_travels_with_the_matching_initiator_id(self, payee):
+        session = FakeSession()
+        gw = EkoPaymentGateway(settings(user_code=None), session)
+        gw.confirm_and_execute(gw.prepare_transfer(self.REGISTERED, payee, 100_000), "5353")
+
+        body = session.last_body
+        assert (body["initiator_id"], body["user_code"]) == ("9911572989", "20810118")
+
+    def test_an_unregistered_payer_is_refused_before_the_pintwin(self, payee):
+        """Failing at execute time would burn the payer's one-time PINTWIN to
+        learn something knowable at prepare time."""
+        gw = EkoPaymentGateway(settings(user_code=None), FakeSession())
+        with pytest.raises(PaymentError, match="registered nahi"):
+            gw.prepare_transfer(self.UNREGISTERED, payee, 100_000)
+
+    def test_an_unregistered_payer_never_borrows_another_initiators_code(self, payee):
+        """Quietly substituting a code that *does* work would file the transfer
+        under the wrong initiator — worse than not sending it."""
+        session = FakeSession()
+        gw = EkoPaymentGateway(settings(user_code=None), session)
+        with pytest.raises(PaymentError):
+            gw.prepare_transfer(self.UNREGISTERED, payee, 100_000)
+        assert session.posts == []
+
+    def test_the_configured_code_still_serves_as_a_fallback(self, payee):
+        """A deployment with one shared code and no table keeps working."""
+        session = FakeSession()
+        gw = EkoPaymentGateway(settings(user_code="10472151", user_codes=()), session)
+        gw.confirm_and_execute(gw.prepare_transfer(self.REGISTERED, payee, 100_000), "5353")
+
+        assert session.last_body["user_code"] == "10472151"
+
+    def test_the_table_is_matched_on_the_last_ten_digits(self, payee):
+        """WhatsApp sends `91…`; eko's table is bare 10-digit numbers."""
+        session = FakeSession()
+        gw = EkoPaymentGateway(settings(user_code=None), session)
+        gw.confirm_and_execute(gw.prepare_transfer("9911572989", payee, 100_000), "5353")
+
+        assert session.last_body["user_code"] == "20810118"
+
+
 class TestCustomerIdIsMerchantIdentity:
     """`customer_id` is issued with the credentials, like `user_code`.
 
@@ -904,6 +1061,42 @@ class TestCustomerIdIsMerchantIdentity:
         gw.confirm_and_execute(gw.prepare_transfer(PAYER, payee, 100_000), "5353")
 
         assert session.last_body["customer_id"] == ""
+
+
+class TestCustomerIdIsNeverAPayeeMobileEvenWithoutAVpa:
+    """A real, live attempt sent the payee's own mobile as `customer_id` when
+    the payee had no VPA, on the theory that `customer_id` was the recipient
+    field to use as a fallback. eko rejected it: "customer_id does not exist
+    in system" — confirming, a second time, that `customer_id` is only ever
+    the merchant's own fixed identity (see the module docstring's "trap"
+    note) and never derived from the payee, VPA or not.
+
+    A payee dictated as a bare mobile number is now given a synthetic
+    `<mobile>@upi` VPA before it ever reaches this gateway — see
+    `agent/payment_tools.py::_resolve_payee_input` — so a `Payee` with a
+    phone but no VPA should not occur from real user input any more. These
+    tests pin the gateway's own behaviour regardless: `customer_id` must stay
+    the merchant value no matter what the payee looks like.
+    """
+
+    def test_customer_id_stays_the_merchant_value_even_with_no_vpa(self):
+        session = FakeSession()
+        gw = gateway(session)
+        payee = Payee(phone="9002331157", vpa=None)
+        gw.confirm_and_execute(gw.prepare_transfer(PAYER, payee, 100_000), "5353")
+
+        body = session.last_body
+        assert body["customer_id"] == "9000000001"
+        assert "customer_vpa" not in body
+        assert body["recipient_id_type"] == "mobile_number"
+
+    def test_customer_id_stays_the_merchant_value_with_neither_vpa_nor_phone(self):
+        session = FakeSession()
+        gw = gateway(session)
+        payee = Payee(phone="", vpa=None)
+        gw.confirm_and_execute(gw.prepare_transfer(PAYER, payee, 100_000), "5353")
+
+        assert session.last_body["customer_id"] == "9000000001"
 
 
 class TestInquiryHeadersConfirmedAgainstARealCurl:

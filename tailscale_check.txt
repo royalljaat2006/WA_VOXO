@@ -1,0 +1,10 @@
+=== tailscale installed? ===
+/usr/bin/tailscale
+1.102.2
+  tailscale commit: 6cac918179d4d673bfebe2fc74f81183ddd73fea
+  long version: 1.102.2-t6cac91817-g6ff0ddc72
+  other commit: 6ff0ddc7264e38276f40986706ae4607dbab57d8
+  go version: go1.26.5 (tailscale/go 63ae404c82)
+
+=== tailscale status (if any) ===
+100.127.200.32  openclaw-poweredge-r730  himanshu.sharma@  linux  -  

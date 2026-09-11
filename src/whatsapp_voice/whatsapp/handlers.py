@@ -151,7 +151,7 @@ class TranscribeHandler(MessageHandler):
         # A recording that produced far less text than its length implies is a
         # failed recognition wearing the clothes of a short instruction. Acting
         # on the fragment is the expensive mistake; asking again is not.
-        if is_low_yield(result.text, duration_s):
+        if self._is_low_yield(message, result.text, duration_s):
             logger.info(
                 "Low-yield transcript for %s: %d chars from %.1fs",
                 message.message_id, len(result.text), duration_s,
@@ -160,6 +160,22 @@ class TranscribeHandler(MessageHandler):
             return
 
         self._on_transcript(message, result.text, result.language)
+
+    def _is_low_yield(self, message: AudioMessage, text: str, duration_s: float) -> bool:
+        """Whether this transcript should be treated as a failed recognition.
+
+        Overridable: `is_low_yield`'s char-per-second ratio is only exempted
+        below `MIN_DURATION_FOR_YIELD_CHECK_S` (2.5s), but a PIN's *content*
+        is always tiny ("1234" is 4 characters) while speaking one carefully
+        commonly runs well past 2.5s — pausing to recall it, reading it back
+        digit by digit. Once duration crosses ~1.3s, 4 chars / duration is
+        already under the 3.0 chars/s threshold, so a correctly-recognised
+        PIN gets discarded as noise purely for being short content in a
+        longer recording — not for being wrong. `PaymentHandler` overrides
+        this to trust a transcript that already parses as a valid PIN over
+        the density heuristic.
+        """
+        return is_low_yield(text, duration_s)
 
     def _low_yield_reply(self, message: AudioMessage, text: str) -> str:
         """The reply when a recording produced far less text than its length

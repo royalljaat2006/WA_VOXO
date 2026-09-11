@@ -335,11 +335,48 @@ class TestUnclearRecording:
         self, gateway, pending, tmp_path
     ):
         """The "sirf itna suna: '...'" reply runs before `_on_transcript` —
-        before PaymentFlow ever sees the message — so a spoken PIN that
-        happened to transcribe short (quiet, quick, background noise, which
-        is exactly what "low yield" means) would otherwise be read straight
-        back to the user in the reply itself. Same protection as
-        TestPinIsNotEchoed, for this earlier code path."""
+        before PaymentFlow ever sees the message — so a fragment that happens
+        to transcribe short (quiet, quick, background noise, which is exactly
+        what "low yield" means) would otherwise be read straight back to the
+        user in the reply itself. Same protection as TestPinIsNotEchoed, for
+        this earlier code path.
+
+        Uses "12" rather than a real PIN shape: a *valid* PIN is no longer
+        treated as low-yield at all (see TestPinAcceptedDespiteLowYieldRatio)
+        — this test is about a genuinely mangled fragment, which must still
+        not leak into the reply while a PIN is pending."""
+        from .fakes import make_opus_bytes
+
+        client = FakeClient(media=make_opus_bytes(tmp_path, seconds=8.0))
+        handler = PaymentHandler(
+            client, FakeTranscriber("12"), FakeAgent(), gateway, pending,
+            PaymentSettings(enabled=True, stub_pin="1234"),
+        )
+        open_intent(gateway, pending)
+        handler.handle(audio_message())
+
+        assert "12" not in client.last_reply
+        assert "dobara" in client.last_reply.lower()
+
+
+class TestPinAcceptedDespiteLowYieldRatio:
+    def test_a_pin_spoken_slowly_is_accepted_not_rejected_as_low_yield(
+        self, gateway, pending, tmp_path
+    ):
+        """`is_low_yield`'s char-per-second ratio structurally cannot pass a
+        bare PIN once the recording runs past ~1.3s: "1234" is 4 characters,
+        and 4 chars over 8 seconds is far under the 3.0 chars/s threshold.
+        Speaking a payment PIN carefully — a pause to recall it, reading it
+        back digit by digit — routinely takes far longer than that. Before
+        `PaymentHandler._is_low_yield`, a correctly-recognised PIN was
+        rejected as "Awaaz saaf nahi aayi" on *every* retry, no matter how
+        many times the payer repeated it. Observed in a real run: one payer
+        could never confirm a transfer this way, while another (who happened
+        to speak fast) always could — not an audio-quality difference, a
+        structural one in the low-yield check.
+
+        A transcript that already extracts cleanly as a PIN must win over
+        the density heuristic."""
         from .fakes import make_opus_bytes
 
         client = FakeClient(media=make_opus_bytes(tmp_path, seconds=8.0))
@@ -350,7 +387,27 @@ class TestUnclearRecording:
         open_intent(gateway, pending)
         handler.handle(audio_message())
 
-        assert "1234" not in client.last_reply
+        assert gateway.executed != []
+        assert "dobara" not in client.last_reply.lower()
+
+    def test_a_non_pin_fragment_is_still_low_yield_while_awaiting_a_pin(
+        self, gateway, pending, tmp_path
+    ):
+        """The override only trusts a transcript that actually parses as a
+        PIN — it must not blanket-exempt the whole awaiting-PIN window, or a
+        genuinely failed recognition would be forwarded as if it were real
+        content."""
+        from .fakes import make_opus_bytes
+
+        client = FakeClient(media=make_opus_bytes(tmp_path, seconds=8.0))
+        handler = PaymentHandler(
+            client, FakeTranscriber("do"), FakeAgent(), gateway, pending,
+            PaymentSettings(enabled=True, stub_pin="1234"),
+        )
+        open_intent(gateway, pending)
+        handler.handle(audio_message())
+
+        assert gateway.executed == []
         assert "dobara" in client.last_reply.lower()
 
     def test_a_low_yield_fragment_is_still_echoed_when_nothing_is_pending(

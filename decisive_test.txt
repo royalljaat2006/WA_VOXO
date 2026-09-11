@@ -1,0 +1,19 @@
+=== current server date/time ===
+Mon Aug 24 04:32:57 PM IST 2026
+
+=== test with REAL production header style (real dev_key + real HMAC secret_key), real tid ===
+HTTP/1.1 200 OK
+Date: Mon, 24 Aug 2026 11:02:57 GMT
+Content-Type: application/json
+Transfer-Encoding: chunked
+Connection: keep-alive
+Pragma: No-cache
+Cache-Control: no-cache
+Expires: Thu, 01 Jan 1970 05:30:00 IST
+server: Eko
+Access-Control-Allow-Origin: *
+Access-Control-Allow-Credentials: true
+Access-Control-Allow-Methods: GET, POST, OPTIONS
+Access-Control-Allow-Headers: DNT,X-Mx-ReqToken,Keep-Alive,User-Agent,X-Requested-With,If-Modified-Since,Cache-Control,Content-Type,real-uri
+
+{"response_status_id":0,"data":{"tx_status":"0","tds":"","txstatus_desc":"Success","fee":"0.0","channel":"","txn_wallet":"","branch":"","claim_count":"","tid":"3573928638","allow_retry":"0","insurance_acquired":"","policy_number":"","currency":"INR","commission":"","pipe":"","bank_ref_num":"536013882336","recipient_id":"","timestamp":"2026-08-21 10:14:59","gst_loss":"","amount":"50.0","policy_url":"","claim_generated":"","gst_benefit":"","tx_desc":"","client_ref_id":"90000000363243147299","insurance_amount":"","service_tax":"","customer_id":""},"response_type_id":70,"message":"Success!tx.inquiry.success","status":0}

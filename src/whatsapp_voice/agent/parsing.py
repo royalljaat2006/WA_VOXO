@@ -127,10 +127,24 @@ _PIN_FILLER = frozenset({
     # a prompt back ("mera pintwin 1234 hai") says it too. "twin" alone is
     # included as well, in case a transcript splits "pintwin" into two words.
     "pintwin", "twin", "पिनट्विन", "ट्विन",
+    # Politeness particles very common in spoken Hindi/Hinglish PIN confirmations
+    # ("sir mera pin ... hai", "... hai ji") — a real transfer was wrongly dropped
+    # as "user changed subject" because "ji" wasn't recognised and the strict
+    # nothing-but-digits check rejected the whole utterance on that one word.
+    "sir", "ji", "जी", "सर",
 })
 
 #: Spoken digits for a PIN. Separate from _UNITS: here a bare "do" IS a 2,
 #: because the whole utterance is expected to be nothing but digits.
+#:
+#: Includes Devanagari-phonetic spellings of the *English* digit words
+#: ("वन", "टू", "थ्री", "फोर"...) alongside native Hindi ones — Hindi-language
+#: STT (Sarvam/Whisper) transliterates English speech into Devanagari script
+#: rather than switching to Latin, the same trap `_SPOKEN_DIGITS` (mobile/VPA
+#: parsing) already accounts for. A payer digit-by-digit PIN spoken in English
+#: but transcribed in Hindi mode ("वन टू थ्री फोर") was silently rejected as
+#: "not a PIN" before this — observed in a real transfer, cancelled instead of
+#: confirmed.
 _PIN_WORDS: dict[str, str] = {
     "zero": "0", "shunya": "0", "sifar": "0", "o": "0",
     "ek": "1", "one": "1",
@@ -145,6 +159,9 @@ _PIN_WORDS: dict[str, str] = {
     "शून्य": "0", "एक": "1", "दो": "2", "तीन": "3", "चार": "4",
     "पांच": "5", "पाँच": "5", "छह": "6", "छे": "6",
     "सात": "7", "आठ": "8", "नौ": "9",
+    "ज़ीरो": "0", "जीरो": "0",
+    "वन": "1", "टू": "2", "थ्री": "3", "फोर": "4", "फ़ोर": "4",
+    "फाइव": "5", "सिक्स": "6", "सेवन": "7", "सेवेन": "7", "नाइन": "9",
 }
 
 
@@ -297,10 +314,133 @@ _SPOKEN_LETTERS: dict[str, str] = {
 _CLEAN_VPA_CHUNK = re.compile(r"^[a-zA-Z0-9@._-]+$")
 
 
+#: Full-word spoken forms of common, unambiguous bank-issued UPI handles — a
+#: payer who says "ओके एचडीएफसी बैंक" or "okay HDFC bank" instead of spelling
+#: "o-k-h-d-f-c-b-a-n-k" letter by letter should not have to repeat
+#: themselves. Real failure this fixes: a payer's actual VPA was
+#: "khatrisurender94@okhdfcbank" and the transcript carried the handle as
+#: three spoken words ("ओके एचडीएफसी बैंक"), which nothing here recognised.
+#:
+#: Deliberately limited to bank-**issued** handles, which map to exactly one
+#: string. "PhonePe"/"Google Pay" are excluded on purpose: their actual handle
+#: varies by which bank is linked (@ybl, @okaxis, @oksbi...), and guessing one
+#: is exactly the "confidently wrong" failure this module exists to avoid.
+#: `oksbi` and `ptyes` are not a guess — both were the real recipient in a
+#: production transcript this session; `okicici`/`okaxis` are the same
+#: bank-issued family and already appear as this project's own canonical VPA
+#: examples (`eko_gateway.py`, test fixtures).
+_OK_WORDS = ("ok", "okay", "ओके")
+_BANK_SUFFIX_WORDS = ("bank", "बैंक")
+
+#: bank code -> the one handle it actually issues.
+_OK_HANDLES: dict[str, str] = {
+    "hdfc": "okhdfcbank",
+    "sbi": "oksbi",
+    "icici": "okicici",
+    "axis": "okaxis",
+}
+#: bank code -> every way a payer says the bank's name, Hindi and English.
+_OK_BANK_WORDS: dict[str, tuple[str, ...]] = {
+    "hdfc": ("hdfc", "एचडीएफसी"),
+    "sbi": ("sbi", "एसबीआई"),
+    "icici": ("icici", "आईसीआईसीआई", "आइसीआईसीआई"),
+    "axis": ("axis", "एक्सिस"),
+}
+
+#: Paytm-issued handles, "pt" + bank code — limited to the two with real
+#: evidence (see above), not extended to other banks on a guess.
+_PAYTM_WORDS = ("paytm", "पेटीएम")
+_PAYTM_HANDLES: dict[str, str] = {"sbi": "ptsbi", "yes": "ptyes"}
+_PAYTM_BANK_WORDS: dict[str, tuple[str, ...]] = {
+    "sbi": ("sbi", "एसबीआई"),
+    "yes": ("yes", "यस"),
+}
+
+#: Generic, bank-independent handles spoken as a single whole word rather
+#: than spelled out — "9000000000@upi" and "9876543210@paytm" are both
+#: already-canonical shapes elsewhere in this project.
+_STANDALONE_HANDLES: dict[str, tuple[str, ...]] = {
+    "upi": ("upi", "यूपीआई"),
+    "paytm": ("paytm", "पेटीएम"),
+}
+
+
+def _build_handle_phrase_patterns() -> list[tuple[re.Pattern[str], str]]:
+    """Compiled (pattern, replacement) pairs, most specific first.
+
+    Order matters: "paytm sbi" must be replaced by "ptsbi" before the bare
+    "paytm" pattern ever gets a chance to fire on what would otherwise be a
+    leftover word — one pass of `re.sub` per pattern, in this order, means
+    the combo patterns consume their words before the standalone ones run.
+    """
+
+    def alt(words: tuple[str, ...]) -> str:
+        return "(?:" + "|".join(re.escape(w) for w in words) + ")"
+
+    patterns: list[tuple[re.Pattern[str], str]] = []
+    for code, handle in _OK_HANDLES.items():
+        body = rf"{alt(_OK_WORDS)}\s+{alt(_OK_BANK_WORDS[code])}(?:\s+{alt(_BANK_SUFFIX_WORDS)})?"
+        patterns.append((re.compile(body, re.IGNORECASE), handle))
+    for code, handle in _PAYTM_HANDLES.items():
+        bank_words = alt(_PAYTM_BANK_WORDS[code])
+        body = rf"{alt(_PAYTM_WORDS)}\s+{bank_words}(?:\s+{alt(_BANK_SUFFIX_WORDS)})?"
+        patterns.append((re.compile(body, re.IGNORECASE), handle))
+    for handle, words in _STANDALONE_HANDLES.items():
+        patterns.append((re.compile(alt(words), re.IGNORECASE), handle))
+    return patterns
+
+
+_HANDLE_PHRASE_PATTERNS = _build_handle_phrase_patterns()
+
+
+def _expand_spoken_handles(text: str) -> str:
+    """Replace a spoken bank-handle phrase with its compact ASCII form.
+
+    Runs on the raw transcript, before any tokenising — "94 एट ओके एचडीएफसी
+    बैंक" becomes "94 एट okhdfcbank": three unclassifiable Devanagari words
+    collapse into one clean token `_reconstruct_spoken_vpa` can recognise
+    whole, the same way an already-Latin handle is recognised today.
+    """
+    for pattern, handle in _HANDLE_PHRASE_PATTERNS:
+        text = pattern.sub(handle, text)
+    return text
+
+
+#: What a payer's sentence may contain *around* a dictated VPA without that
+#: being part of it — "mera UPI ID hai <vpa>". Deliberately small and
+#: word-for-word, the same reasoning as `_PIN_FILLER`: anything NOT in this
+#: set that `_reconstruct_spoken_vpa` would otherwise drop is treated as
+#: unresolvable rather than discarded, because it might be real content
+#: (a name) rather than framing — see that function's safety check.
+_VPA_FRAME_FILLER = frozenset({
+    "mera", "meri", "hai", "ye", "yeh", "is", "the", "my", "upi", "id",
+    "apna", "apni", "please", "kripya",
+    "मेरा", "मेरी", "है", "ये", "यह", "अपना", "अपनी", "यूपीआई", "आईडी", "कृपया",
+})
+
+
+#: Words that are ONLY ever grammar around a dictated VPA, never legitimate
+#: VPA content themselves — unlike "upi"/"paytm" (in `_VPA_FRAME_FILLER` too,
+#: but also real standalone handles), nothing here is ever a real handle or
+#: local part on its own, so these must never be swept into a reconstructed
+#: VPA just because they happen to be pure ASCII letters.
+#:
+#: Without this, "mera UPI ID hai ptyes एट ओके आइसीआईसीआई" reconstructed to
+#: "meraupiidhaiptyes@okicici" — a wrong-but-valid-shaped VPA, not a caught
+#: error — because `_CLEAN_VPA_CHUNK` cannot tell an ordinary Latin-script
+#: sentence word from a fragment of a dictated VPA.
+_VPA_NEVER_CONTENT = frozenset({
+    "mera", "meri", "hai", "ye", "yeh", "is", "the", "my", "id",
+    "apna", "apni", "please", "kripya",
+})
+
+
 def _classify_vpa_token(token: str) -> str | None:
     """One token → the character(s) it contributes to a VPA, or None if it
     is not part of one (filler, noise, an unrecognised word)."""
     low = token.lower()
+    if low in _VPA_NEVER_CONTENT:
+        return None
     if low in _SPOKEN_DIGITS:
         return _SPOKEN_DIGITS[low]
     if low in _AT_WORDS:
@@ -368,6 +508,19 @@ def _reconstruct_spoken_vpa(text: str) -> str | None:
     if best_start == -1:
         return None
 
+    # Everything outside the chosen run must be recognised framing filler —
+    # "mera UPI ID hai" — or this refuses rather than reconstructs. Without
+    # this check, an unresolvable name glued directly onto the real local
+    # part (no separator, e.g. "khatrisurender94") could have its name
+    # silently dropped, leaving a shorter, different, well-formed VPA that
+    # still passes _VPA_RE — a wrong-but-plausible account, not a caught
+    # error. Observed as a live risk once handle-phrase expansion (below)
+    # started turning previously-unclassifiable trailing words into a clean
+    # run on its own.
+    excluded = tokens[:best_start] + tokens[best_start + best_len:]
+    if any(t.lower() not in _VPA_FRAME_FILLER for t in excluded):
+        return None
+
     run_tokens = tokens[best_start:best_start + best_len]
     run_chars = classified[best_start:best_start + best_len]
 
@@ -405,7 +558,8 @@ def parse_vpa(text: str) -> str | None:
     if not text:
         return None
 
-    normalised = " ".join(text.strip().split())
+    expanded = _expand_spoken_handles(text)
+    normalised = " ".join(expanded.strip().split())
     normalised = re.sub(r"\s+at\s+the\s+rate\s+", "@", normalised, flags=re.IGNORECASE)
     normalised = re.sub(r"\s+at\s+", "@", normalised, flags=re.IGNORECASE)
     normalised = normalised.replace(" ", "").lower()
@@ -413,8 +567,25 @@ def parse_vpa(text: str) -> str | None:
     if _VPA_RE.match(normalised):
         return normalised
 
-    reconstructed = _reconstruct_spoken_vpa(text)
+    reconstructed = _reconstruct_spoken_vpa(expanded)
     return reconstructed if reconstructed and _VPA_RE.match(reconstructed) else None
+
+
+def payer_mobile(payer: str) -> str | None:
+    """A WhatsApp payer id reduced to the bare 10-digit mobile, or None.
+
+    `919876543210` → `9876543210`. Returns None rather than padding or
+    truncating anything implausible into shape: the demo path's
+    `demo:<session_id>` is a payer id that is not a phone number at all, and
+    turning it into a mobile-shaped string would aim a real request at a real
+    stranger's number.
+
+    Callers that must not proceed without one (`eko_gateway._initiator_id_for`)
+    raise on None; callers where it is merely a nice-to-have
+    (`pintwin_push`) skip the work instead.
+    """
+    digits = "".join(c for c in (payer or "") if c.isdigit())
+    return digits[-10:] if len(digits) >= 10 else None
 
 
 def mobile_from_vpa(vpa: str) -> str | None:
@@ -445,6 +616,66 @@ def mobile_from_vpa(vpa: str) -> str | None:
     if digits != local or len(digits) not in (10, 11, 12):
         return None
     return digits[-10:]
+
+
+#: A real Indian mobile number: 10 digits, first digit 6-9 (no landline,
+#: no obviously-wrong shape). eko's transfer contract can identify a payee
+#: this way directly — see `EkoPaymentGateway.confirm_and_execute`'s
+#: mobile-only branch.
+_INDIAN_MOBILE_RE = re.compile(r"^[6-9]\d{9}$")
+
+#: What a payer's sentence may contain *around* a dictated phone number —
+#: "mera number hai ...", "uska mobile ... hai" — same reasoning as
+#: `_VPA_FRAME_FILLER`: only recognised filler may be dropped, so a name or
+#: any other unrecognised word makes the whole utterance ambiguous rather
+#: than being silently trimmed off.
+_MOBILE_FRAME_FILLER = frozenset({
+    "mera", "uska", "iska", "unka", "apna", "number", "no", "mobile", "hai",
+    "ye", "yeh", "is", "the", "my", "his", "her", "please",
+    "मेरा", "उसका", "इसका", "उनका", "अपना", "नंबर", "मोबाइल", "है", "ये", "यह",
+})
+
+
+def parse_mobile_payee(text: str) -> str | None:
+    """Extract a bare 10-digit mobile-number payee from speech — the payee
+    identifier when the user dictates a number instead of a UPI ID.
+
+    Handles the same digit-by-digit spoken forms `parse_vpa` does for a
+    VPA's digits — plain digits, spoken English/Hindi digit names, and their
+    Devanagari-transliterated forms (reusing `_SPOKEN_DIGITS`) — plus a
+    leading `+91`/`91`/`0` country/trunk prefix, stripped before validation.
+
+    Deliberately strict, same reasoning as `extract_pin` and `parse_vpa`:
+    once recognised filler is removed, the utterance must be **nothing but
+    digits**. A number mixed with a name, a UPI handle, or any unrecognised
+    word returns None rather than a best guess — the caller asks again
+    instead of aiming a transfer at a mistranscribed stranger's number.
+    """
+    if not text:
+        return None
+
+    normalised = _normalise(text)
+    if not normalised:
+        return None
+
+    digits: list[str] = []
+    for word in normalised.split():
+        if word.isdigit():
+            digits.extend(word)
+        elif word in _SPOKEN_DIGITS:
+            digits.append(_SPOKEN_DIGITS[word])
+        elif word in _MOBILE_FRAME_FILLER:
+            continue
+        else:
+            return None  # a real sentence, not a bare phone number
+
+    number = "".join(digits)
+    if len(number) == 12 and number.startswith("91"):
+        number = number[2:]
+    elif len(number) == 11 and number.startswith("0"):
+        number = number[1:]
+
+    return number if _INDIAN_MOBILE_RE.match(number) else None
 
 
 def extract_pin(text: str, lengths: tuple[int, ...] = (4, 6)) -> str | None:
@@ -479,3 +710,144 @@ def extract_pin(text: str, lengths: tuple[int, ...] = (4, 6)) -> str | None:
             return None  # a real sentence, not a PIN
 
     return "".join(digits) if len(digits) in lengths else None
+
+
+# --------------------------------------------------------------- name transliteration
+
+#: Independent Devanagari vowels (no preceding consonant).
+_DEVANAGARI_INDEP_VOWELS: dict[str, str] = {
+    "अ": "a", "आ": "aa", "इ": "i", "ई": "ee", "उ": "u", "ऊ": "oo",
+    "ऋ": "ri", "ए": "e", "ऐ": "ai", "ओ": "o", "औ": "au",
+}
+
+#: Dependent vowel signs (matras) attached to a consonant, replacing its
+#: inherent "a". Order matches the independent vowels above.
+_DEVANAGARI_MATRAS: dict[str, str] = {
+    "ा": "aa", "ि": "i", "ी": "ee", "ु": "u", "ू": "oo",
+    "ृ": "ri", "े": "e", "ै": "ai", "ो": "o", "ौ": "au",
+}
+
+#: Consonants, Roman equivalent *without* the inherent vowel — the matra table
+#: above (or its absence) supplies whatever vowel sound follows.
+_DEVANAGARI_CONSONANTS: dict[str, str] = {
+    "क": "k", "ख": "kh", "ग": "g", "घ": "gh", "ङ": "ng",
+    "च": "ch", "छ": "chh", "ज": "j", "झ": "jh", "ञ": "ny",
+    "ट": "t", "ठ": "th", "ड": "d", "ढ": "dh", "ण": "n",
+    "त": "t", "थ": "th", "द": "d", "ध": "dh", "न": "n",
+    "प": "p", "फ": "ph", "ब": "b", "भ": "bh", "म": "m",
+    "य": "y", "र": "r", "ल": "l", "व": "v",
+    "श": "sh", "ष": "sh", "स": "s", "ह": "h", "ळ": "l",
+    # Nukta forms (a dot under the base letter) — distinct sounds in Urdu/Hinglish
+    # loanwords, still commonly seen in Hindi names.
+    "क़": "q", "ख़": "kh", "ग़": "g", "ज़": "z", "ड़": "r", "ढ़": "rh", "फ़": "f",
+}
+
+#: Two-letter conjuncts common enough in names to spell out rather than derive
+#: from their two components + virama (क्ष → "ksh", not "kṣ"-style "kṣh").
+_DEVANAGARI_CONJUNCTS: dict[str, str] = {
+    "क्ष": "ksh", "ज्ञ": "gy", "त्र": "tr", "श्र": "shr",
+}
+
+_DEVANAGARI_VIRAMA = "्"  # Suppresses a consonant's inherent vowel (conjuncts).
+_DEVANAGARI_ANUSVARA = "ं"  # Nasalisation — rendered "n", close enough for a label.
+_DEVANAGARI_CHANDRABINDU = "ँ"  # Lighter nasalisation — same rendering.
+_DEVANAGARI_VISARGA = "ः"  # Rare in names; rendered "h".
+
+
+def _transliterate_devanagari_word(word: str) -> str:
+    """One space-free chunk of Devanagari (plus whatever Latin/digits/punctuation
+    it already contains) into a Roman-script approximation.
+
+    Not a linguistically exact transliteration (there is no such thing without a
+    name-specific spelling dictionary — "दीपांशु" could honestly be "Deepanshu"
+    or "Deepaanshu"): it is a best-effort, deterministic rendering good enough for
+    a bank's recipient_name label and for the payer to recognise on read-back.
+    Non-Devanagari characters (already-Roman letters, digits, punctuation) pass
+    through untouched, so a mixed-script name transliterates only the part that
+    needs it.
+    """
+    out: list[str] = []
+    i = 0
+    n = len(word)
+    while i < n:
+        # Longest match first: a listed conjunct beats its parts read separately.
+        conjunct = next(
+            (c for c in _DEVANAGARI_CONJUNCTS if word.startswith(c, i)), None,
+        )
+        if conjunct is not None:
+            out.append(_DEVANAGARI_CONJUNCTS[conjunct])
+            i += len(conjunct)
+            # A conjunct already carries its own vowel treatment; a following
+            # matra (rare) still applies, an inherent "a" does not.
+            if i < n and word[i] in _DEVANAGARI_MATRAS:
+                out[-1] += _DEVANAGARI_MATRAS[word[i]]
+                i += 1
+            elif i < n and word[i] == _DEVANAGARI_VIRAMA:
+                i += 1
+            continue
+
+        char = word[i]
+        if char in _DEVANAGARI_INDEP_VOWELS:
+            out.append(_DEVANAGARI_INDEP_VOWELS[char])
+            i += 1
+            continue
+        if char in _DEVANAGARI_CONSONANTS:
+            roman = _DEVANAGARI_CONSONANTS[char]
+            nxt = word[i + 1] if i + 1 < n else ""
+            if nxt in _DEVANAGARI_MATRAS:
+                out.append(roman + _DEVANAGARI_MATRAS[nxt])
+                i += 2
+            elif nxt == _DEVANAGARI_VIRAMA:
+                out.append(roman)  # consonant cluster: no vowel here
+                i += 2
+            elif i == n - 1 or (i + 1 == n - 1 and word[i + 1] in (
+                _DEVANAGARI_ANUSVARA, _DEVANAGARI_CHANDRABINDU, _DEVANAGARI_VISARGA,
+            )):
+                # Word-final bare consonant: Hindi drops the inherent "a" here
+                # (schwa deletion) — "राम" is "Raam", not "Raama".
+                out.append(roman)
+                i += 1
+            else:
+                out.append(roman + "a")
+                i += 1
+            continue
+        if char in (_DEVANAGARI_ANUSVARA, _DEVANAGARI_CHANDRABINDU):
+            # Before ह specifically, anusvara nasalises to "ng" ("सिंह" is "Singh", not
+            # "Sinh") — the single common-name case worth special-casing rather than
+            # building full velar/palatal/retroflex/dental/labial anusvara disambiguation.
+            out.append("ng" if i + 1 < n and word[i + 1] == "ह" else "n")
+            i += 1
+            continue
+        if char == _DEVANAGARI_VISARGA:
+            out.append("h")
+            i += 1
+            continue
+        if char == _DEVANAGARI_VIRAMA:
+            i += 1  # stray virama with nothing to attach to
+            continue
+        # Not Devanagari at all — already-Roman letters, digits, punctuation.
+        out.append(char)
+        i += 1
+    return "".join(out)
+
+
+def transliterate_devanagari_name(text: str) -> str:
+    """A name (or any short phrase) with every Devanagari word rendered in Roman
+    script, word boundaries and capitalisation preserved as a name would expect.
+
+    Used for `recipient_name` before it reaches eko (`agent/payment_tools.py`):
+    eko's bank rail takes English only, and the payer must never be asked to
+    repeat a name they already said just because the model passed it through in
+    Devanagari — this makes that unnecessary rather than asking for it not to
+    happen. A word already in Roman script (or mixed script) is returned as-is
+    for the Roman part; only the Devanagari portion is converted.
+    """
+    words = text.split(" ")
+    rendered = []
+    for word in words:
+        if not word:
+            rendered.append(word)
+            continue
+        converted = _transliterate_devanagari_word(word)
+        rendered.append(converted[:1].upper() + converted[1:] if converted else converted)
+    return " ".join(rendered)

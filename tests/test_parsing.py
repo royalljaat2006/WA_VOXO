@@ -11,7 +11,9 @@ from whatsapp_voice.agent.parsing import (
     extract_pin,
     format_amount,
     parse_amount_paise,
+    parse_mobile_payee,
     parse_vpa,
+    transliterate_devanagari_name,
 )
 
 
@@ -184,6 +186,22 @@ class TestExtractPin:
         ("mera pintwin 1234 hai", "1234"),
         ("PINTWIN is 1234", "1234"),
         ("1234 mera pintwin ha", "1234"),
+        # Hindi-language STT transliterates *English* digit words into
+        # Devanagari script rather than switching to Latin ("one two three
+        # four" -> "वन टू थ्री फोर") — the same trap `_SPOKEN_DIGITS` already
+        # accounts for in mobile/VPA parsing. A real transfer was wrongly
+        # cancelled as "user changed subject" because the correct PIN,
+        # digit-by-digit in English, was transcribed this way. Observed in
+        # a real run.
+        ("वन टू थ्री फोर", "1234"),
+        ("पिन है वन टू थ्री फोर", "1234"),
+        # "sir"/"ji" are common Hindi/Hinglish politeness particles around a
+        # spoken PIN confirmation ("sir mera pin ... hai", "... hai ji") —
+        # their absence from the filler list rejected the whole utterance.
+        # Observed in a real run alongside the transliteration bug above.
+        ("one two three four ji", "1234"),
+        ("sir mera pin one two three four hai", "1234"),
+        ("हां मेरा पिन एक दो तीन चार जी", "1234"),
     ])
     def test_accepts_pins(self, text, pin):
         assert extract_pin(text) == pin
@@ -285,3 +303,171 @@ class TestParseVpa:
         through as plain Latin text already — a realistic partial case."""
         text = "सेवेन सेवेन सिक्स थ्री एट फाइव सेवेन फाइव ज़ीरो फाइव एट ptyes"
         assert parse_vpa(text) == "7763857505@ptyes"
+
+
+class TestSpokenBankHandlePhrases:
+    """A payer who says the bank's name as ordinary words — "ओके एचडीएफसी
+    बैंक", "okay SBI" — rather than spelling the handle letter by letter.
+
+    Real failure this fixes: a payer's actual VPA was
+    "khatrisurender94@okhdfcbank"; the transcript carried the handle as three
+    spoken words nothing here recognised, and the bot asked the payer to
+    repeat themselves for no reason — the digits and handle were both
+    already unambiguous, only the *spelling style* of the handle was
+    unfamiliar to the parser.
+    """
+
+    @pytest.mark.parametrize("text,vpa", [
+        ("9520680874 at okay hdfc bank", "9520680874@okhdfcbank"),
+        ("9520680874 at ओके एचडीएफसी बैंक", "9520680874@okhdfcbank"),
+        ("9520680874 at ओके एचडीएफसी", "9520680874@okhdfcbank"),
+        ("9520680874 at ok sbi", "9520680874@oksbi"),
+        ("9520680874 at ओके एसबीआई", "9520680874@oksbi"),
+        ("9520680874 at okay icici bank", "9520680874@okicici"),
+        ("9520680874 at ओके आईसीआईसीआई", "9520680874@okicici"),
+        ("9520680874 at okay axis bank", "9520680874@okaxis"),
+        ("9520680874 at ओके एक्सिस", "9520680874@okaxis"),
+        ("9520680874 at paytm sbi", "9520680874@ptsbi"),
+        ("9520680874 at पेटीएम एसबीआई बैंक", "9520680874@ptsbi"),
+        ("9520680874 at paytm yes bank", "9520680874@ptyes"),
+        ("9520680874 at पेटीएम यस", "9520680874@ptyes"),
+        ("9000000000 at upi", "9000000000@upi"),
+        ("9000000000 at यूपीआई", "9000000000@upi"),
+        ("9876543210 at paytm", "9876543210@paytm"),
+        ("9876543210 at पेटीएम", "9876543210@paytm"),
+    ])
+    def test_full_word_handle_names_resolve(self, text, vpa):
+        assert parse_vpa(text) == vpa
+
+    def test_fully_devanagari_digits_plus_a_spoken_handle_name(self):
+        """The digits were spelled out AND the handle was spoken as words —
+        both fixes composing, not just the handle one in isolation."""
+        text = "सात सात छह तीन आठ पांच सात पांच शून्य पांच एट ओके आईसीआईसीआई"
+        assert parse_vpa(text) == "7763857505@okicici"
+
+    def test_a_name_glued_to_the_handle_still_refuses_rather_than_truncates(self):
+        """The actual bug report: eko's own account resolution needs the
+        WHOLE local part. Recognising "ओके एचडीएफसी बैंक" must not tempt the
+        reconstruction into silently dropping the unresolvable name in front
+        of it and returning a shorter, different, well-formed VPA instead —
+        that is a wrong account, not a caught error."""
+        for text in (
+            "कतरी सुरेंद्र 94@ओके एचडीएफसी बैंक",
+            "कतरी सुरेंद्र 94 एट ओके एचडीएफसी बैंक",
+        ):
+            assert parse_vpa(text) is None
+
+    def test_framing_filler_around_a_full_word_handle_is_still_dropped(self):
+        """"mera UPI ID hai ..." framing composes with the new handle-phrase
+        recognition, not just with letter-by-letter spelling."""
+        text = "mera UPI ID hai 9520680874 एट ओके एसबीआई"
+        assert parse_vpa(text) == "9520680874@oksbi"
+
+    def test_an_unrelated_ascii_word_is_never_swept_into_the_local_part(self):
+        """The gap the fix above closed: `_CLEAN_VPA_CHUNK` cannot tell an
+        ordinary Latin-script sentence word from real VPA content, so
+        "mera"/"hai"/"is"/"id" must be blocked from ever classifying as VPA
+        material — not just from being *chosen* as part of the run, but from
+        being eligible to join it at all. Before this, they were absorbed
+        into the reconstructed local part instead of being recognised as
+        droppable framing."""
+        text = "mera UPI ID hai 9520680874 एट ओके एसबीआई"
+        result = parse_vpa(text)
+        assert result is not None
+        local_part = result.split("@", 1)[0]
+        for stray in ("mera", "upi", "id", "hai"):
+            assert stray not in local_part
+
+    def test_truncated_stt_is_still_not_guessed_into(self):
+        """The other real screenshot: STT cut off mid-handle ("...@पी", the
+        rest of "ptsbi" never arrived). No amount of handle-phrase
+        recognition should turn a single stray letter into a guessed bank
+        name — asking again is correct here, not a remaining gap."""
+        assert parse_vpa("9520680874@पी") is None
+
+
+class TestParseMobilePayee:
+    """Payments can now name a payee by a bare mobile number, not only a UPI
+    ID — see agent/payment_tools.py::_resolve_payee_input. Same rule as VPA
+    parsing: ambiguous means None, never a guess, because the cost of a wrong
+    digit is money sent to a stranger."""
+
+    @pytest.mark.parametrize("text,mobile", [
+        ("9876543210", "9876543210"),
+        ("+919876543210", "9876543210"),
+        ("919876543210", "9876543210"),
+        ("09876543210", "9876543210"),
+        ("98765 43210", "9876543210"),
+        ("9876-543-210", "9876543210"),
+    ])
+    def test_plain_and_prefixed_digits(self, text, mobile):
+        assert parse_mobile_payee(text) == mobile
+
+    def test_spoken_digit_by_digit_english(self):
+        text = "nine eight seven six five four three two one zero"
+        assert parse_mobile_payee(text) == "9876543210"
+
+    def test_spoken_digit_by_digit_devanagari(self):
+        text = "नौ आठ सात छह पांच चार तीन दो एक शून्य"
+        assert parse_mobile_payee(text) == "9876543210"
+
+    @pytest.mark.parametrize("text,mobile", [
+        ("mera number 9876543210 hai", "9876543210"),
+        ("uska mobile 9876543210", "9876543210"),
+        ("please 9876543210", "9876543210"),
+        ("यह नंबर है 9876543210", "9876543210"),
+    ])
+    def test_framing_filler_is_dropped(self, text, mobile):
+        assert parse_mobile_payee(text) == mobile
+
+    @pytest.mark.parametrize("text", [
+        "",
+        "ramesh@okaxis",         # a VPA, not a bare mobile
+        "12345",                 # too short
+        "98765432101234",        # too long, no recognisable prefix shape
+        "1234567890",            # does not start 6-9, not a real Indian mobile
+        "mera naam ramesh hai",  # no digits at all
+        "9876543210 aur 1234567890",  # two numbers — ambiguous, must not guess
+    ])
+    def test_rejects_ambiguous_or_non_mobile_input(self, text):
+        assert parse_mobile_payee(text) is None
+
+
+class TestTransliterateDevanagariName:
+    """recipient_name must reach eko in English — the payer speaking Hindi must never cost
+    them a repeat. Real production failure this exists to prevent: the model was told to
+    transliterate the name itself before calling prepare_transfer, and instead asked the
+    payer to repeat the name in English. This makes that unnecessary rather than asking for
+    it not to happen — the conversion happens here, deterministically, every time."""
+
+    @pytest.mark.parametrize("text,expected", [
+        ("राम", "Raam"),
+        ("श्याम", "Shyaam"),
+        ("रमेश कुमार", "Ramesh Kumaar"),
+        ("विशेष जैन", "Vishesh Jain"),
+        ("अनु", "Anu"),
+    ])
+    def test_common_names_transliterate_to_a_recognisable_english_rendering(self, text, expected):
+        assert transliterate_devanagari_name(text) == expected
+
+    def test_anusvara_before_h_is_ng_not_n(self):
+        """The one phoneme worth special-casing: सिंह is Singh, not the wrong "Sinh" a plain
+        anusvara-is-always-n rule would produce — a whole consonant sound missing, not just a
+        spelling-style difference like Kumar/Kumaar."""
+        assert transliterate_devanagari_name("प्रिया सिंह") == "Priyaa Singh"
+
+    def test_a_name_already_in_english_passes_through_unchanged(self):
+        assert transliterate_devanagari_name("Ramesh Kumar") == "Ramesh Kumar"
+
+    def test_a_mixed_script_name_converts_only_the_devanagari_word(self):
+        assert transliterate_devanagari_name("Ramesh कुमार") == "Ramesh Kumaar"
+
+    def test_conjuncts_render_as_one_known_cluster_not_the_parts_separately(self):
+        # क्ष -> "ksh", not an attempt to derive it from क + ् + ष separately.
+        assert "ksh" in transliterate_devanagari_name("अक्षय").lower()
+
+    def test_empty_and_whitespace_only_input_stay_empty(self):
+        assert transliterate_devanagari_name("") == ""
+
+    def test_digits_and_punctuation_are_left_alone(self):
+        assert transliterate_devanagari_name("Ramesh-9") == "Ramesh-9"

@@ -1,0 +1,7 @@
+=== current time ===
+Mon Aug 24 03:37:04 PM IST 2026
+=== current line count ===
+19074 uvicorn.log
+=== everything after line 18888 (current boot) matching webhook/Queued/error ===
+12:INFO:     2a03:2880:13ff:6:::0 - "GET /webhook?hub.mode=subscribe&hub.challenge=1973464602&hub.verify_token=eko-wa-z3qQPgqv2NVRuxiEEWGqypd5dkEz4p7S&hub_mode=subscribe&hub_challenge=1973464602&hub_verify_token=eko-wa-z3qQPgqv2NVRuxiEEWGqypd5dkEz4p7S HTTP/1.1" 200 OK
+126:INFO:     52.112.49.196:0 - "HEAD /webhook HTTP/1.1" 405 Method Not Allowed

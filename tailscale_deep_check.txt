@@ -1,0 +1,36 @@
+=== funnel status again ===
+
+# Funnel on:
+#     - https://openclaw-poweredge-r730.tailb276af.ts.net
+
+https://openclaw-poweredge-r730.tailb276af.ts.net (Funnel on)
+|-- / proxy http://127.0.0.1:8003
+
+
+=== netcheck ===
+2026/08/24 16:08:32 portmap: monitor: gateway and self IP changed: gw=192.168.1.1 self=192.168.1.10
+
+Report:
+	* Time: 2026-08-24 16:08:37.154399049+05:30
+	* UDP: true
+	* IPv4: yes, 122.176.147.78:53303
+	* IPv6: no, but OS has support
+	* MappingVariesByDestIP: false
+	* PortMapping: 
+	* CaptivePortal: false
+	* Nearest DERP: Bengaluru
+	* DERP latency:
+		- blr: 44.8ms  (Bengaluru)
+		- sin: 83.9ms  (Singapore)
+		- hkg: 122ms   (Hong Kong)
+		- dbi: 136.1ms (Dubai)
+		- ams: 149.4ms (Amsterdam)
+		- lhr: 155.1ms (London)
+		- tok: 168.6ms (Tokyo)
+		- par: 192.8ms (Paris)
+
+=== capabilities ===
+    "Capabilities": [
+      "HTTPS://TAILSCALE.COM/s/DEPRECATED-NODE-CAPS#see-https://github.com/tailscale/tailscale/issues/11508",
+      "default-auto-update",
+      "funnel",

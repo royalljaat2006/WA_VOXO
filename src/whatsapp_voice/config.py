@@ -32,6 +32,24 @@ def _optional(name: str) -> str | None:
     return value or None
 
 
+def _pairs(name: str, default: str) -> tuple[tuple[str, str], ...]:
+    """`a:1,b:2` → `(("a", "1"), ("b", "2"))`.
+
+    A tuple of pairs rather than a dict because every other collection setting
+    here is an immutable tuple, and a frozen dataclass holding a mutable
+    mapping invites someone to edit settings at runtime. Malformed entries are
+    skipped rather than raising: a typo in one pair should not stop the server
+    from starting for everyone else.
+    """
+    raw = os.getenv(name, default)
+    out: list[tuple[str, str]] = []
+    for item in raw.split(","):
+        key, sep, value = item.partition(":")
+        if sep and key.strip() and value.strip():
+            out.append((key.strip(), value.strip()))
+    return tuple(out)
+
+
 @dataclass(frozen=True)
 class SttSettings:
     """Speech-to-text engine configuration (Phase 0, reused from Phase 3)."""
@@ -409,6 +427,39 @@ class PaymentSettings:
 
 
 @dataclass(frozen=True)
+class PinTwinSettings:
+    """Pushing a fresh PINTWIN key to the payer's own phone.
+
+    Off by default, and harmless when off: without it the payer obtains their
+    key the way they do today, from eko Connect in a browser. See
+    `agent/pintwin_push.py` for why this can never fail a transfer.
+
+    The endpoint does not exist yet — eko has not confirmed whether they can
+    push to a customer's phone at all. Everything here is therefore a
+    placeholder waiting on that answer, which is also why `enabled` starts
+    False rather than inferring itself from the URL being set.
+    """
+
+    enabled: bool = False
+    #: eko's key-push endpoint. Shape unconfirmed — see the module docstring.
+    push_url: str | None = None
+    #: Sent as `Authorization: Bearer …` when set.
+    api_key: str | None = None
+    #: Short on purpose. This sits inside the payment path, and a slow side
+    #: channel must not make the payer wait for a confirmation message.
+    timeout_s: int = 10
+
+    @classmethod
+    def from_env(cls) -> PinTwinSettings:
+        return cls(
+            enabled=_flag("PINTWIN_PUSH_ENABLED", False),
+            push_url=_optional("PINTWIN_PUSH_URL"),
+            api_key=_optional("PINTWIN_PUSH_API_KEY"),
+            timeout_s=int(os.getenv("PINTWIN_PUSH_TIMEOUT_S", "10")),
+        )
+
+
+@dataclass(frozen=True)
 class GroupSettings:
     """Behaviour in WhatsApp groups.
 
@@ -468,8 +519,29 @@ class EkoSettings:
     timeout_s: int = 30
 
     # --- merchant identity ---
-    #: The BC/agent code eko issued.
+    #: The BC/agent code eko issued. Only a fallback now — `user_codes` below
+    #: is what a transfer actually uses, because the right code depends on who
+    #: is initiating.
     user_code: str | None = None
+    #: `initiator_id` → `user_code`, because eko pairs the two: it files each
+    #: transaction under the initiator's own code, and an initiator it does not
+    #: recognise is rejected with `status 1297 — "This user does not exist"`
+    #: (observed live on 2026-08-17 with an empty `user_code`).
+    #:
+    #: Hardcoded here as defaults at the project owner's instruction, for the
+    #: three numbers eko has registered so far. There is **no lookup API for
+    #: this yet** — asking eko for one is an open question — so a payer who is
+    #: not in this table cannot transact at all, and `eko_gateway` says so
+    #: before asking for a PINTWIN rather than after.
+    #:
+    #: Override without a code change via
+    #: `EKO_USER_CODES=<initiator>:<code>,<initiator>:<code>`.
+    user_codes: tuple[tuple[str, str], ...] = (
+        ("8287151832", "44070001"),
+        ("9911572989", "20810118"),
+        ("9810118586", "20810001"),
+        ("9899246466", "20810002"),
+    )
     #: **No longer used to build `initiator_id`.** Kept only because removing
     #: a settings field is a bigger change than leaving an unused one — every
     #: transfer, inquiry and lookup now sends the WhatsApp payer's own number
@@ -624,6 +696,11 @@ class EkoSettings:
             static_secret_key=_optional("EKO_STATIC_SECRET_KEY"),
             timeout_s=int(os.getenv("EKO_TIMEOUT_S", "30")),
             user_code=_optional("EKO_USER_CODE"),
+            user_codes=_pairs(
+                "EKO_USER_CODES",
+                "8287151832:44070001,9911572989:20810118,9810118586:20810001,"
+                "9899246466:20810002",
+            ),
             initiator_id=_optional("EKO_INITIATOR_ID"),
             customer_id=_optional("EKO_CUSTOMER_ID"),
             service_code=os.getenv("EKO_SERVICE_CODE", "86"),
@@ -812,6 +889,7 @@ class Settings:
     agent: AgentSettings = field(default_factory=AgentSettings)
     payments: PaymentSettings = field(default_factory=PaymentSettings)
     groups: GroupSettings = field(default_factory=GroupSettings)
+    pintwin: PinTwinSettings = field(default_factory=PinTwinSettings)
     eko: EkoSettings = field(default_factory=EkoSettings)
     demo: DemoSettings = field(default_factory=DemoSettings)
     ops: OpsSettings = field(default_factory=OpsSettings)
@@ -845,6 +923,7 @@ class Settings:
             agent=AgentSettings.from_env(),
             payments=PaymentSettings.from_env(),
             groups=GroupSettings.from_env(),
+            pintwin=PinTwinSettings.from_env(),
             eko=EkoSettings.from_env(),
             demo=DemoSettings.from_env(),
             ops=OpsSettings.from_env(),

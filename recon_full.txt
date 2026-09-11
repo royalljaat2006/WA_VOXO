@@ -1,0 +1,111 @@
+     1	# /etc/nginx/conf.d/recon.conf — Eko Recon: /recon static + /api proxy, on :80 (LAN) and :443 (public HTTPS, self-signed)
+     2	upstream recon_backend { server 127.0.0.1:8000; keepalive 16; }
+     3	
+     4	server {
+     5	    listen 80;
+     6	    server_name _;
+     7	    absolute_redirect off;
+     8	    client_max_body_size 100m;
+     9	
+    10	    location /api/ {
+    11	        proxy_pass http://recon_backend;
+    12	        proxy_http_version 1.1;
+    13	        proxy_set_header Connection         "";
+    14	        proxy_set_header Host               $host;
+    15	        proxy_set_header X-Real-IP          $remote_addr;
+    16	        proxy_set_header X-Forwarded-For    $proxy_add_x_forwarded_for;
+    17	        proxy_set_header X-Forwarded-Proto  $scheme;
+    18	        proxy_read_timeout    300s;
+    19	        proxy_send_timeout    300s;
+    20	        proxy_request_buffering off;
+    21	    }
+    22	
+    23	    location = /recon { return 301 /recon/; }
+    24	
+    25	    location ^~ /recon/assets/ {
+    26	        root /var/www;
+    27	        try_files $uri =404;
+    28	        access_log off;
+    29	        expires 1y;
+    30	        add_header Cache-Control "public, immutable";
+    31	    }
+    32	
+    33	    location = /recon/index.html {
+    34	        root /var/www;
+    35	        add_header Cache-Control "no-cache";
+    36	    }
+    37	
+    38	    location /recon/ {
+    39	        root /var/www;
+    40	        try_files $uri /recon/index.html;
+    41	    }
+    42	}
+    43	
+    44	server {
+    45	    listen 443 ssl;
+    46	    server_name _;
+    47	    absolute_redirect off;
+    48	
+    49	    ssl_certificate     /etc/nginx/ssl/recon.crt;
+    50	    ssl_certificate_key /etc/nginx/ssl/recon.key;
+    51	    include snippets/claw-dashboard.conf;
+    52	    include snippets/inactive-alert.conf;
+    53	    include snippets/eko-coaching.conf;
+    54	    include snippets/eko-kiosk.conf;
+    55	    ssl_protocols       TLSv1.2 TLSv1.3;
+    56	
+    57	    client_max_body_size 100m;
+    58	
+    59	    location /api/ {
+    60	        proxy_pass http://recon_backend;
+    61	        proxy_http_version 1.1;
+    62	        proxy_set_header Connection         "";
+    63	        proxy_set_header Host               $host;
+    64	        proxy_set_header X-Real-IP          $remote_addr;
+    65	        proxy_set_header X-Forwarded-For    $proxy_add_x_forwarded_for;
+    66	        proxy_set_header X-Forwarded-Proto  $scheme;
+    67	        proxy_read_timeout    300s;
+    68	        proxy_send_timeout    300s;
+    69	        proxy_request_buffering off;
+    70	    }
+    71	
+    72	    location = /recon { return 301 /recon/; }
+    73	
+    74	    location ^~ /recon/assets/ {
+    75	        root /var/www;
+    76	        try_files $uri =404;
+    77	        access_log off;
+    78	        expires 1y;
+    79	        add_header Cache-Control "public, immutable";
+    80	    }
+    81	
+    82	    location = /recon/index.html {
+    83	        root /var/www;
+    84	        add_header Cache-Control "no-cache";
+    85	    }
+    86	
+    87	    location /recon/ {
+    88	        root /var/www;
+    89	        try_files $uri /recon/index.html;
+    90	    }
+    91	
+    92	    # ---- Added by Claude (WhatsApp Server Issue Fetcher dashboard), 2026-08-05 ----
+    93	    # Purely additive: proxies /wa-issue-fetcher/ to our own Node app on 127.0.0.1:4545.
+    94	    # Mirrors the /wa-issue-fetcher/ block already added to csp-dashboard (port 80).
+    95	    # Does not touch or affect the /api/ or /recon/ locations above or anything
+    96	    # else in this shared config.
+    97	    location /wa-issue-fetcher/ {
+    98	        client_max_body_size 20M;
+    99	        proxy_read_timeout 600s;
+   100	        proxy_send_timeout 600s;
+   101	        proxy_pass http://127.0.0.1:4545/wa-issue-fetcher/;
+   102	        proxy_http_version 1.1;
+   103	        proxy_set_header Upgrade $http_upgrade;
+   104	        proxy_set_header Connection $wa_issue_fetcher_conn_upgrade;
+   105	        proxy_set_header Host $host;
+   106	        proxy_set_header X-Real-IP $remote_addr;
+   107	        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+   108	        proxy_set_header X-Forwarded-Proto $scheme;
+   109	    }
+   110	
+   111	}

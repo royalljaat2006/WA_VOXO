@@ -144,6 +144,10 @@ class TestBuildHandler:
         # whatever that file happens to say today.
         monkeypatch.setenv("WHATSAPP_SUPERUSER_NUMBERS", "")
         monkeypatch.setenv("GROUPS_ENABLED", "false")
+        # Same reason, and it bit for real: once a deployment's .env gained a
+        # REDIS_URL, this reached for a Redis nobody runs locally and died on
+        # the optional import. No test should need a running server.
+        monkeypatch.setenv("REDIS_URL", "")
 
         handler = build_handler(Settings.load())
         # Innermost, not `.inner`: the question is which behaviour HANDLER chose,
@@ -157,6 +161,7 @@ class TestBuildHandler:
         monkeypatch.setenv("WHATSAPP_ACCESS_TOKEN", "tok")
         monkeypatch.setenv("WHATSAPP_PHONE_NUMBER_ID", "123")
         monkeypatch.setenv("HANDLER", "nonsense")
+        monkeypatch.setenv("REDIS_URL", "")  # see the note above
 
         with pytest.raises(ValueError, match="agent"):
             build_handler(Settings.load())

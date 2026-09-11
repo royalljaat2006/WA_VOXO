@@ -1,0 +1,5 @@
+--- subscribing whatsapp_business_account to the new URL ---
+{"success":true}
+
+--- confirming current subscriptions ---
+{"data":[{"object":"whatsapp_business_account","callback_url":"https:\/\/openclaw-poweredge-r730.tailb276af.ts.net\/webhook","active":true,"fields":[{"name":"messages","version":"v25.0"}]},{"object":"user","callback_url":"https:\/\/participated-reprint-pill-outline.trycloudflare.com\/webhook","active":true}]}

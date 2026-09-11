@@ -1,0 +1,5 @@
+=== audit trail location ===
+PAYMENT_AUDIT_PATH=data/audit/payments.jsonl
+data/audit
+
+=== last few audit entries with full tid, if file found ===

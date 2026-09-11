@@ -60,6 +60,16 @@ that is only noticed at reconciliation. **Confirmed with eko's platform team:
   number eko never wanted. The payee's `phone` is now display and caps only;
   it never reaches the wire.
 
+  **Confirmed a second time, live, 2026-08-18:** a later attempt to support
+  paying a bare mobile number (no VPA at all) tried sending the payee's own
+  mobile as `customer_id` instead of the merchant value — plausible from the
+  field name, same trap as above. eko rejected it outright: "customer_id
+  does not exist in system". `customer_id` is never a payee value, full
+  stop. `agent/payment_tools.py::_resolve_payee_input` now turns a bare
+  mobile number into a `<mobile>@upi` VPA instead, riding the
+  already-confirmed `customer_vpa` path below rather than inventing a new
+  wire field.
+
 ### Transaction Inquiry — confirmed line by line against a real curl
 
 - **The `{reference}` in the inquiry URL is eko's own TID**, the one returned
@@ -148,6 +158,7 @@ from typing import Any
 import requests
 
 from ..config import EkoSettings
+from .parsing import payer_mobile
 from .payments import (
     Payee,
     PayeeSource,
@@ -222,7 +233,7 @@ class EkoPaymentGateway(PaymentGateway):
 
         body = self._post(self._settings.verify_path, {
             "initiator_id": _initiator_id_for(current_payer.get()),
-            "user_code": self._settings.user_code or "",
+            "user_code": _user_code_for(current_payer.get(), self._settings),
             "recipient_id_type": "mobile_number",
             "customer_id": digits,
         })
@@ -255,7 +266,7 @@ class EkoPaymentGateway(PaymentGateway):
 
         body = self._post(self._settings.spent_today_path, {
             "initiator_id": _initiator_id_for(payer),
-            "user_code": self._settings.user_code or "",
+            "user_code": _user_code_for(payer, self._settings),
         })
         return int(_field(body, self._settings.field_spent_today) or 0)
 
@@ -271,6 +282,10 @@ class EkoPaymentGateway(PaymentGateway):
         if amount_paise <= 0:
             raise PaymentError("Amount zero se zyada hona chahiye.")
         _rupees(amount_paise)  # fail here, not after the PIN has been spoken
+        # Same reasoning: an unregistered initiator is rejected by eko with
+        # "This user does not exist", and finding that out costs the payer a
+        # one-time PINTWIN if it happens at execute time instead of here.
+        _user_code_for(payer, self._settings)
         return prepare_intent(payer, payee, amount_paise, self._settings.intent_ttl_s)
 
     def confirm_and_execute(self, intent: TransferIntent, pin: str) -> TransferResult:
@@ -288,7 +303,8 @@ class EkoPaymentGateway(PaymentGateway):
             "lang": self._settings.lang,
             "service_code": self._settings.service_code,
             "interaction_type_id": self._settings.interaction_type_id,
-            "user_code": self._settings.user_code or "",
+            # Paired with `initiator_id` below — see `_user_code_for`.
+            "user_code": _user_code_for(intent.payer, self._settings),
             # The WhatsApp payer's own number, not a fixed merchant value —
             # see `_initiator_id_for`. `customer_id` right below is the one
             # that stays fixed; do not conflate the two.
@@ -299,7 +315,16 @@ class EkoPaymentGateway(PaymentGateway):
             # this flow demand a phone number for every transfer.
             "recipient_id_type": "mobile_number",
             "customer_id": self._settings.customer_id or "",
-            "recipient_name": intent.payee.resolved_name or self._settings.recipient_name,
+            # eko rejects an empty one outright — status 1449, "Invalid
+            # Recipient Name", which failed a real transfer. It returns no name
+            # of its own, so the order is: a directory-verified name if one
+            # somehow exists, then the name the payer stated (the normal path —
+            # `prepare_transfer` requires it), then the configured fallback.
+            "recipient_name": (
+                intent.payee.resolved_name
+                or intent.payee.stated_name
+                or self._settings.recipient_name
+            ),
             "amount": _rupees(intent.amount_paise),
             "is_consent": "1",
             "latlong": self._settings.latlong,
@@ -651,13 +676,48 @@ def _initiator_id_for(payer: str) -> str:
     must not silently become a wrong-but-mobile-shaped `initiator_id` sent to
     eko for a real transfer.
     """
-    digits = "".join(c for c in (payer or "") if c.isdigit())
-    if len(digits) < 10:
+    mobile = payer_mobile(payer)
+    if mobile is None:
         raise PaymentError(
             f"Cannot derive an initiator_id from payer {payer!r} — not a "
             "usable mobile number."
         )
-    return digits[-10:]
+    return mobile
+
+
+def _user_code_for(payer: str, settings: EkoSettings) -> str:
+    """The `user_code` eko pairs with **this payer's** `initiator_id`.
+
+    eko files each transaction under the initiator's own code, so the two must
+    match: sending an empty `user_code` for a real initiator was rejected with
+    `status 1297 — "This user does not exist"` on a live transfer.
+
+    There is no lookup API for this yet, so the mapping is configuration
+    (`EkoSettings.user_codes`). An unknown payer raises rather than falling
+    back to some other payer's code — a transfer filed under the wrong
+    initiator is worse than one that does not happen.
+    """
+    initiator = _initiator_id_for(payer)
+    for candidate, code in settings.user_codes:
+        if _digits(candidate) == initiator:
+            return code
+    if settings.user_code:
+        return settings.user_code
+    raise PaymentError(
+        f"{initiator} eko ke saath registered nahi hai — is number se transfer "
+        "nahi ho sakta. (No user_code is configured for this initiator; see "
+        "EKO_USER_CODES.)"
+    )
+
+
+def _digits(value: str) -> str:
+    """Last 10 digits of anything phone-shaped, for comparing identities.
+
+    Unlike `payer_mobile` this tolerates a short value (returning whatever
+    digits there were) because it only ever compares two configured strings —
+    it never builds a number a request is aimed at.
+    """
+    return "".join(c for c in (value or "") if c.isdigit())[-10:]
 
 
 def _is_pin_failure(http_status: int, status: str, message: str) -> bool:
@@ -742,6 +802,17 @@ def _curl_get(
     here is either our own fixed config or a freshly generated hex id, but
     building the command this way means an eko-supplied value could never
     end up interpreted by a shell even if one were plumbed in here later.
+
+    **Empty-valued headers use curl's `Header;` form, not `Header: `.** Given
+    `-H "developer_key: "` curl *silently drops the header entirely* rather
+    than sending it empty. eko requires `developer_key` / `secret_key` /
+    `secret_key_timestamp` to be present-but-empty, so every inquiry went out
+    with no credentials at all and came back `402 "Authentication parameters
+    missing"` — for weeks, while the message was read as an eko-side problem
+    and chased through four hosts, an IP-allowlisting theory and a clock-skew
+    check. Verified 2026-08-17 with `curl -v`: the `Header;` form puts the
+    empty headers on the wire, and the response changes (to 401, a different
+    and more honest error).
     """
     args = [
         "curl", "-s", "--compressed", "-G", url,
@@ -751,7 +822,7 @@ def _curl_get(
     for key, value in params.items():
         args += ["--data-urlencode", f"{key}={value}"]
     for key, value in headers.items():
-        args += ["-H", f"{key}: {value}"]
+        args += ["-H", f"{key};" if value == "" else f"{key}: {value}"]
     result = subprocess.run(
         args, capture_output=True, timeout=timeout_s + 5, check=False
     )

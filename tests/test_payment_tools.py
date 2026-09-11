@@ -76,7 +76,7 @@ class TestResolvePayeeTool:
 
 class TestPrepareTransferTool:
     def test_prepares_an_intent(self, prepare_tool, pending):
-        result = prepare_tool.run(payee=RAMESH_VPA, amount="2000")
+        result = prepare_tool.run(payee=RAMESH_VPA, amount="2000", recipient_name="Ramesh Kumar")
         assert "status=prepared" in result
         assert "amount_rupees=2,000.00" in result
         assert f"payee_vpa={RAMESH_VPA}" in result
@@ -89,72 +89,72 @@ class TestPrepareTransferTool:
         `payer_initiator_id` rather than derive it — the same 10-digit,
         no-country-code shape eko_gateway.py sends eko as `initiator_id`
         (PAYER's own digits, minus the "91")."""
-        result = prepare_tool.run(payee=RAMESH_VPA, amount="2000")
+        result = prepare_tool.run(payee=RAMESH_VPA, amount="2000", recipient_name="Ramesh Kumar")
         assert "payer_initiator_id=9000000009" in result
         assert "Payer = <payer_initiator_id>" in result
-        assert "Payee = <the UPI ID>" in result
+        assert "Payee = <the UPI ID or mobile number>" in result
         assert "Amount = <amount_rupees>" in result
 
     def test_the_intent_carries_both_the_vpa_and_the_mobile_number(self, prepare_tool, pending):
-        prepare_tool.run(payee=RAMESH_VPA, amount="2000")
+        prepare_tool.run(payee=RAMESH_VPA, amount="2000", recipient_name="Ramesh Kumar")
         payee = pending.get(PAYER).payee
         assert payee.vpa == RAMESH_VPA
         assert payee.phone == "9876543210"
         assert payee.resolved_name == "Ramesh Kumar"
 
     def test_spoken_amount_is_parsed_by_us_not_the_model(self, prepare_tool, pending):
-        prepare_tool.run(payee=RAMESH_VPA, amount="do hazaar")
+        prepare_tool.run(payee=RAMESH_VPA, amount="do hazaar", recipient_name="Ramesh Kumar")
         assert pending.get(PAYER).amount_paise == 200_000
 
     def test_devanagari_amount(self, prepare_tool, pending):
-        prepare_tool.run(payee=RAMESH_VPA, amount="दो हज़ार")
+        prepare_tool.run(payee=RAMESH_VPA, amount="दो हज़ार", recipient_name="Ramesh Kumar")
         assert pending.get(PAYER).amount_paise == 200_000
 
     def test_unparseable_amount_asks_rather_than_guesses(self, prepare_tool, pending):
         with pytest.raises(ToolError):
-            prepare_tool.run(payee=RAMESH_VPA, amount="kuch paise")
+            prepare_tool.run(payee=RAMESH_VPA, amount="kuch paise", recipient_name="Ramesh Kumar")
         assert pending.get(PAYER) is None
 
     def test_ambiguous_amount_is_refused(self, prepare_tool):
         with pytest.raises(ToolError):
-            prepare_tool.run(payee=RAMESH_VPA, amount="2000 ya 3000")
+            prepare_tool.run(payee=RAMESH_VPA, amount="2000 ya 3000", recipient_name="Ramesh Kumar")
 
     def test_preparing_moves_no_money(self, prepare_tool, gateway):
-        prepare_tool.run(payee=RAMESH_VPA, amount="2000")
+        prepare_tool.run(payee=RAMESH_VPA, amount="2000", recipient_name="Ramesh Kumar")
         assert gateway.executed == []
 
     def test_not_a_vpa_is_a_tool_error(self, prepare_tool, pending):
         with pytest.raises(ToolError):
-            prepare_tool.run(payee="Ramesh", amount="2000")
+            prepare_tool.run(payee="Ramesh", amount="2000", recipient_name="Ramesh Kumar")
         assert pending.get(PAYER) is None
 
     def test_a_name_based_vpa_prepares_on_its_own(self, prepare_tool, pending):
-        prepare_tool.run(payee="ramesh@okaxis", amount="400")
+        prepare_tool.run(payee="ramesh@okaxis", amount="400", recipient_name="Ramesh Kumar")
         assert pending.get(PAYER).payee.vpa == "ramesh@okaxis"
 
 
 class TestLimits:
     def test_above_the_per_transaction_cap_is_refused(self, prepare_tool):
         with pytest.raises(ToolError, match="limit"):
-            prepare_tool.run(payee=RAMESH_VPA, amount="50000")
+            prepare_tool.run(payee=RAMESH_VPA, amount="50000", recipient_name="Ramesh Kumar")
 
     def test_first_transfer_to_an_unknown_vpa_is_capped_low(self, prepare_tool):
         """No payee list means every VPA is arbitrary. This cap is what turns a
         misheard digit into a small mistake instead of a large one."""
         with pytest.raises(ToolError, match="first transfer"):
-            prepare_tool.run(payee=UNKNOWN_VPA, amount="2000")
+            prepare_tool.run(payee=UNKNOWN_VPA, amount="2000", recipient_name="Ramesh Kumar")
 
     def test_small_first_transfer_to_an_unknown_vpa_is_allowed(self, prepare_tool, pending):
-        prepare_tool.run(payee=UNKNOWN_VPA, amount="400")
+        prepare_tool.run(payee=UNKNOWN_VPA, amount="400", recipient_name="Ramesh Kumar")
         assert pending.get(PAYER).amount_paise == 40_000
 
     def test_known_payee_is_not_subject_to_the_first_time_cap(self, prepare_tool, pending):
-        prepare_tool.run(payee=RAMESH_VPA, amount="2000")
+        prepare_tool.run(payee=RAMESH_VPA, amount="2000", recipient_name="Ramesh Kumar")
         assert pending.get(PAYER) is not None
 
     def test_a_refused_transfer_leaves_nothing_pending(self, prepare_tool, pending):
         with pytest.raises(ToolError):
-            prepare_tool.run(payee=RAMESH_VPA, amount="50000")
+            prepare_tool.run(payee=RAMESH_VPA, amount="50000", recipient_name="Ramesh Kumar")
         assert pending.get(PAYER) is None
 
 
@@ -165,12 +165,12 @@ class TestPayerIdentity:
         current_payer.set("")
         tool = PrepareTransferTool(gateway, pending, LIMITS)
         with pytest.raises(ToolError, match="payer"):
-            tool.run(payee=RAMESH_VPA, amount="2000")
+            tool.run(payee=RAMESH_VPA, amount="2000", recipient_name="Ramesh Kumar")
 
     def test_intent_is_owned_by_the_payer_in_context(self, gateway, pending):
         current_payer.set("919000000007")
         tool = PrepareTransferTool(gateway, pending, LIMITS)
-        tool.run(payee=RAMESH_VPA, amount="2000")
+        tool.run(payee=RAMESH_VPA, amount="2000", recipient_name="Ramesh Kumar")
 
         assert pending.get("919000000007") is not None
         assert pending.get("919000000009") is None
@@ -237,7 +237,7 @@ class TestTheVpaIsTheWholeIdentification:
         "9000000000@upi",
     ])
     def test_every_shape_of_real_upi_id_prepares(self, prepare_tool, pending, vpa):
-        prepare_tool.run(payee=vpa, amount="400")
+        prepare_tool.run(payee=vpa, amount="400", recipient_name="Ramesh Kumar")
         assert pending.get(PAYER).payee.vpa == vpa
 
     def test_a_mobile_shaped_vpa_still_fills_in_the_phone(self, gateway):
@@ -262,15 +262,98 @@ class TestTheVpaIsTheWholeIdentification:
         """No directory hit means the first-time cap applies — the protection
         that matters most when the payee cannot be named."""
         with pytest.raises(ToolError, match="first transfer"):
-            prepare_tool.run(payee="firstname.lastname@okicici", amount="2000")
+            prepare_tool.run(
+                payee="firstname.lastname@okicici", amount="2000",
+                recipient_name="Ramesh Kumar",
+            )
+
+
+class TestRecipientNameReachesTheBank:
+    """eko rejects a transfer whose `recipient_name` is empty — status 1449,
+    "Invalid Recipient Name", which failed a real ₹10 transfer in production.
+
+    eko has no payee-name lookup, so the payer is the only source, which is why
+    `prepare_transfer` requires the name rather than treating it as optional.
+    """
+
+    def test_the_stated_name_lands_on_the_intent(self, prepare_tool, pending):
+        prepare_tool.run(payee=UNKNOWN_VPA, amount="400", recipient_name="Ramesh Kumar")
+        assert pending.get(PAYER).payee.stated_name == "Ramesh Kumar"
+
+    def test_it_survives_the_store_round_trip(self, prepare_tool, pending):
+        """The intent is re-read from the store between prepare and execute, so
+        a field the serialiser forgets is a field eko receives empty — exactly
+        the bug this test exists to catch."""
+        prepare_tool.run(payee=UNKNOWN_VPA, amount="400", recipient_name="Ramesh Kumar")
+
+        reread = PendingIntents(pending._store).get(PAYER)
+        assert reread.payee.stated_name == "Ramesh Kumar"
+
+    def test_a_stated_name_is_not_a_verified_one(self, prepare_tool, pending):
+        """`resolved_name` means a directory confirmed it. A name the payer
+        merely said must not satisfy that, or the digit read-back that
+        dictation requires would be silently skipped."""
+        prepare_tool.run(payee=UNKNOWN_VPA, amount="400", recipient_name="Ramesh Kumar")
+        payee = pending.get(PAYER).payee
+
+        assert payee.resolved_name is None
+        assert payee.needs_digit_readback is True
+
+    def test_the_result_carries_the_name_for_the_readback(self, prepare_tool):
+        result = prepare_tool.run(payee=UNKNOWN_VPA, amount="400", recipient_name="Ramesh Kumar")
+        assert "recipient_name=Ramesh Kumar" in result
+
+    @pytest.mark.parametrize("bad", ["", "   ", "1234", "9876543210"])
+    def test_a_nameless_name_is_refused_here_not_by_the_bank(self, prepare_tool, pending, bad):
+        """Failing in the tool costs a question; failing at eko costs the
+        whole transfer after the user has already spoken their PINTWIN."""
+        with pytest.raises(ToolError):
+            prepare_tool.run(payee=UNKNOWN_VPA, amount="400", recipient_name=bad)
+        assert pending.get(PAYER) is None
+
+    def test_a_upi_id_is_not_a_name(self, prepare_tool):
+        """The model reaching for the one string it already has."""
+        with pytest.raises(ToolError, match="UPI ID"):
+            prepare_tool.run(
+                payee=UNKNOWN_VPA, amount="400", recipient_name="firstname.lastname@okicici"
+            )
+
+    def test_surrounding_whitespace_is_cleaned_not_rejected(self, prepare_tool, pending):
+        prepare_tool.run(payee=UNKNOWN_VPA, amount="400", recipient_name="  Ramesh   Kumar \n")
+        assert pending.get(PAYER).payee.stated_name == "Ramesh Kumar"
+
+    def test_a_devanagari_name_is_transliterated_not_refused(self, prepare_tool, pending):
+        """eko's bank rail takes English only, but the payer speaking Hindi must never cost
+        them a repeat — asking the model to transliterate before calling this tool was tried
+        first (PAYMENT_PROMPT) and observed in production falling back to "please say the
+        name in English" instead of actually transliterating. So this converts the name
+        deterministically in code — the tool call succeeds either way, no ToolError, no
+        back-and-forth with the user."""
+        prepare_tool.run(payee=UNKNOWN_VPA, amount="400", recipient_name="रमेश कुमार")
+        assert pending.get(PAYER).payee.stated_name == "Ramesh Kumaar"
+
+    def test_english_spelling_of_a_hindi_name_is_accepted_unchanged(self, prepare_tool, pending):
+        """A name already in English (the model transliterated it, or the payer just said it
+        in English) passes through untouched — nothing in it is Devanagari to convert."""
+        prepare_tool.run(payee=UNKNOWN_VPA, amount="400", recipient_name="Ramesh Kumar")
+        assert pending.get(PAYER).payee.stated_name == "Ramesh Kumar"
 
 
 class TestPromptDoesNotAskForExtraDetails:
-    def test_it_forbids_asking_for_a_phone_number(self):
-        assert "Never ask for a phone" in PAYMENT_PROMPT
+    def test_it_forbids_asking_for_an_account_number_or_ifsc(self):
+        """A bare phone number is now a valid, complete payee on its own — see
+        TestMobileNumberPayee — so the prompt no longer forbids it. Account
+        numbers and IFSCs remain genuinely unneeded: eko identifies the payee
+        by VPA or mobile number alone."""
+        assert "Never ask for an account number or an IFSC" in PAYMENT_PROMPT
+
+    def test_bare_phone_number_is_no_longer_forbidden(self):
+        assert "Never a bare phone number" not in PAYMENT_PROMPT
 
     def test_it_names_the_whole_flow(self):
-        assert "Amount, UPI ID, PIN" in PAYMENT_PROMPT
+        """The name joined the list once eko rejected a real transfer for
+        sending an empty `recipient_name` (status 1449)."""
+        assert "Amount, payee, name, PINTWIN" in PAYMENT_PROMPT
 
 
 class TestTheLookupToolIsOnlyOfferedWhenItCanAnswer:
@@ -303,11 +386,76 @@ class TestTheLookupToolIsOnlyOfferedWhenItCanAnswer:
         resolves the payee itself."""
         current_payer.set(PAYER)
         [prepare] = payment_tools(self.Nameless(), pending, LIMITS)
-        result = prepare.run(payee="firstname.lastname@okicici", amount="400")
+        result = prepare.run(
+            payee="firstname.lastname@okicici", amount="400",
+            recipient_name="Ramesh Kumar",
+        )
 
         assert "status=prepared" in result
         assert pending.get(PAYER).payee.vpa == "firstname.lastname@okicici"
 
     def test_the_prompt_tells_the_model_to_prepare_as_soon_as_it_can(self):
-        assert "As soon as you have BOTH" in PAYMENT_PROMPT
+        assert "As soon as you have the UPI ID, the amount AND the name" in PAYMENT_PROMPT
         assert "call the tool, then speak" in PAYMENT_PROMPT
+
+
+class TestMobileNumberPayee:
+    """A payee can now be named by a bare 10-digit mobile number, not only a
+    UPI ID — see agent/payment_tools.py::_resolve_payee_input. The VPA path
+    stays the primary one; this covers the fallback.
+
+    A bare mobile number is turned into a `<mobile>@upi` VPA rather than
+    sent with no VPA at all — a real live attempt at the latter had eko
+    reject the transfer ("customer_id does not exist in system") when the
+    payee's own mobile was sent as `customer_id` in place of a VPA. `@upi`
+    is not a new guess: it is the exact shape eko's platform team already
+    confirmed against a real transfer for a mobile-shaped VPA, so a bare
+    mobile number now rides that same confirmed path.
+    """
+
+    #: `_STUB_DIRECTORY`'s known "Ramesh Kumar" number, dictated bare.
+    RAMESH_MOBILE = "9876543210"
+    #: Not in the stub directory — an arbitrary, unnamed payee.
+    UNKNOWN_MOBILE = "9111222333"
+
+    def test_a_known_mobile_number_resolves_by_name(self, gateway):
+        result = ResolvePayeeTool(gateway).run(payee=self.RAMESH_MOBILE)
+        assert "name=Ramesh Kumar" in result
+        assert "is_new=false" in result
+        assert f"phone={self.RAMESH_MOBILE}" in result
+
+    def test_a_mobile_only_payee_gets_a_synthetic_upi_vpa(self, gateway):
+        result = ResolvePayeeTool(gateway).run(payee=self.RAMESH_MOBILE)
+        assert f"vpa={self.RAMESH_MOBILE}@upi" in result
+
+    def test_an_unknown_mobile_number_is_still_resolved_but_unnamed(self, gateway):
+        result = ResolvePayeeTool(gateway).run(payee=self.UNKNOWN_MOBILE)
+        assert "name=UNKNOWN" in result
+        assert "is_new=true" in result
+
+    def test_prefixed_and_spaced_forms_resolve_the_same_way(self, gateway):
+        for spoken in ("+919876543210", "919876543210", "98765 43210"):
+            result = ResolvePayeeTool(gateway).run(payee=spoken)
+            assert "name=Ramesh Kumar" in result
+
+    def test_prepares_a_transfer_with_a_synthetic_vpa(self, prepare_tool, pending):
+        result = prepare_tool.run(
+            payee=self.RAMESH_MOBILE, amount="2000", recipient_name="Ramesh Kumar"
+        )
+        assert "status=prepared" in result
+        assert f"payee_phone={self.RAMESH_MOBILE}" in result
+        assert f"payee_vpa={self.RAMESH_MOBILE}@upi" in result
+
+        payee = pending.get(PAYER).payee
+        assert payee.vpa == f"{self.RAMESH_MOBILE}@upi"
+        assert payee.phone == self.RAMESH_MOBILE
+
+    def test_first_time_cap_still_applies_to_an_unknown_mobile(self, prepare_tool):
+        with pytest.raises(ToolError, match="first transfer"):
+            prepare_tool.run(
+                payee=self.UNKNOWN_MOBILE, amount="2000", recipient_name="Ramesh Kumar"
+            )
+
+    def test_neither_a_vpa_nor_a_mobile_is_a_tool_error(self, gateway):
+        with pytest.raises(ToolError):
+            ResolvePayeeTool(gateway).run(payee="Rameshwar")

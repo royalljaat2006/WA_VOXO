@@ -1,0 +1,10 @@
+=== last line number of the whole file ===
+18963 uvicorn.log
+
+=== line numbers of last GET /webhook, POST /webhook, Queued ===
+18899:INFO:     2a03:2880:13ff:6:::0 - "GET /webhook?hub.mode=subscribe&hub.challenge=1973464602&hub.verify_token=eko-wa-z3qQPgqv2NVRuxiEEWGqypd5dkEz4p7S&hub_mode=subscribe&hub_challenge=1973464602&hub_verify_token=eko-wa-z3qQPgqv2NVRuxiEEWGqypd5dkEz4p7S HTTP/1.1" 200 OK
+17657:INFO:     2a03:2880:21ff:4a:::0 - "POST /webhook HTTP/1.1" 200 OK
+16336:11:40:27 INFO     whatsapp_voice.whatsapp.app — Queued AudioMessage from …1832
+
+=== where does the CURRENT boot (14:35:40 restart) start, line number? ===
+18888:INFO:     Started server process [762222]

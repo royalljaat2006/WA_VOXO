@@ -1,0 +1,9 @@
+backup made:
+-rw-r--r-- 1 root root 3504 Sep 11 14:11 /etc/nginx/conf.d/recon.conf.bak-wavoxo-1789116115
+inserted
+=== nginx -t ===
+2026/09/11 14:11:55 [warn] 2278190#2278190: conflicting server name "_" on 0.0.0.0:80, ignored
+nginx: the configuration file /etc/nginx/nginx.conf syntax is ok
+nginx: configuration file /etc/nginx/nginx.conf test is successful
+
+STDERR:

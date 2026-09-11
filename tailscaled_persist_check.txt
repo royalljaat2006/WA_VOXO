@@ -1,0 +1,19 @@
+=== is tailscaled a systemd service, enabled? ===
+enabled
+active
+
+=== does the funnel config persist on disk (state file)? ===
+/var/lib/tailscale/tailscaled.log1.txt
+/var/lib/tailscale/tailscaled.log.conf
+/var/lib/tailscale/tailscaled.log2.txt
+/var/lib/tailscale/tailscaled.state
+/var/lib/tailscale/derpmap.cached.json
+
+=== simulate restart of tailscaled, then check funnel status ===
+
+# Funnel on:
+#     - https://openclaw-poweredge-r730.tailb276af.ts.net
+
+https://openclaw-poweredge-r730.tailb276af.ts.net (Funnel on)
+|-- / proxy http://127.0.0.1:8003
+

@@ -37,6 +37,7 @@ Overriding a setting on the command line works because real env vars beat `.env`
 | **Step-by-step for a specific change** (add an engine/tool/handler, plug in the real API) and debugging playbooks | [`whatsapp-voice-agent` skill](.claude/skills/whatsapp-voice-agent/SKILL.md) |
 | **Anything Meta-side** — tokens, webhooks, error codes, every failure hit so far and its fix | [docs/meta-integration-runbook.md](docs/meta-integration-runbook.md) |
 | Voice payments: the PIN gate, amount parsing, safety limits | [docs/voice-payments.md](docs/voice-payments.md) |
+| Every payment error message — cause and what to do | [docs/payment-errors.md](docs/payment-errors.md) |
 | Current status, phases, decision log | [docs/IMPLEMENTATION_PLAN.md](docs/IMPLEMENTATION_PLAN.md) |
 | Setup for one phase | `docs/phase-N-*.md` |
 

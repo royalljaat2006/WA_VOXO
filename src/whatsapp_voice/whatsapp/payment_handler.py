@@ -29,6 +29,7 @@ from __future__ import annotations
 import logging
 
 from ..agent import Agent
+from ..agent.parsing import extract_pin
 from ..agent.payment_flow import PaymentFlow
 from ..agent.payments import ContactBook, PaymentGateway, PendingIntents, current_payer
 from ..audit import AuditTrail
@@ -67,6 +68,7 @@ class PaymentHandler(AgentHandler):
         super().__init__(client, transcriber, agent, echo_transcript)
         self._flow = PaymentFlow(gateway, pending, settings, audit, settlements)
         self._contacts = contacts if contacts is not None else ContactBook()
+        self._settings = settings
 
     # ------------------------------------------------------------- routing
 
@@ -149,6 +151,30 @@ class PaymentHandler(AgentHandler):
             )
             return
         super()._log_transcript(message, result)
+
+    def _is_low_yield(self, message: AudioMessage, text: str, duration_s: float) -> bool:
+        """Never discard a transcript that already parses as a valid PIN.
+
+        `is_low_yield`'s char-per-second check structurally cannot pass a
+        bare PIN once the recording runs past ~1.3s: "1234" is 4 characters,
+        and 4 chars over the 2.5s exemption window is already under the 3.0
+        chars/s threshold — every second beyond that makes it worse. Saying
+        a payment PIN carefully, with a pause to recall it or to read it back
+        digit by digit, routinely takes longer than that. The result: a
+        correctly-recognised PIN was being thrown out on *every* retry, no
+        matter how many times the payer repeated it — not an audio-quality
+        problem, a structural one. Observed in a real run: one payer could
+        never get past this while awaiting a PIN, no matter how they spoke.
+
+        A transcript that already extracts cleanly as a PIN is a stronger,
+        positive signal than the density heuristic, so it wins.
+        """
+        if (
+            self._flow.awaiting_pin(message.from_number)
+            and extract_pin(text, self._settings.pin_lengths) is not None
+        ):
+            return False
+        return super()._is_low_yield(message, text, duration_s)
 
     def _low_yield_reply(self, message: AudioMessage, text: str) -> str:
         """Never echo a partial transcript back to the user while a PIN could

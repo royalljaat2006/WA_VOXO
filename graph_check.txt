@@ -1,0 +1,20 @@
+--- debug_token ---
+{
+  "app_id": "2109835886622600",
+  "application": "WA Voxo",
+  "is_valid": true,
+  "expires_at": 0,
+  "issued_at": 1785999393,
+  "scopes": [
+    "whatsapp_business_management",
+    "whatsapp_business_messaging",
+    "public_profile"
+  ],
+  "type": "SYSTEM_USER"
+}
+
+--- phone number info ---
+{"id":"1195496766984611","display_phone_number":"+91 95997 22251","verified_name":"Eko Bharat Venture Pvt Ltd","quality_rating":"GREEN"}
+
+--- app subscriptions (webhook config as Meta has it) ---
+{"data":[{"object":"whatsapp_business_account","callback_url":"https:\/\/bennett-delight-entrepreneurs-associated.trycloudflare.com\/webhook","active":true,"fields":[{"name":"messages","version":"v25.0"}]},{"object":"user","callback_url":"https:\/\/participated-reprint-pill-outline.trycloudflare.com\/webhook","active":true}]}

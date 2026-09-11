@@ -1,0 +1,14 @@
+--- BEFORE: current subscriptions ---
+{"data":[{"object":"whatsapp_business_account","callback_url":"https:\/\/openclaw-poweredge-r730.tailb276af.ts.net\/webhook","active":true,"fields":[{"name":"messages","version":"v25.0"}]},{"object":"user","callback_url":"https:\/\/participated-reprint-pill-outline.trycloudflare.com\/webhook","active":true}]}
+
+--- deleting ALL subscriptions ---
+{"success":true}
+
+--- AFTER DELETE: confirm empty ---
+{"data":[]}
+
+--- re-creating ONLY the Tailscale whatsapp_business_account subscription ---
+{"success":true}
+
+--- FINAL: confirm clean state ---
+{"data":[{"object":"whatsapp_business_account","callback_url":"https:\/\/openclaw-poweredge-r730.tailb276af.ts.net\/webhook","active":true,"fields":[{"name":"messages","version":"v25.0"}]}]}

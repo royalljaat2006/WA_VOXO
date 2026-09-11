@@ -93,22 +93,40 @@ def upload_dir(sftp: paramiko.SFTPClient, local_root: Path, remote_root: str) ->
     return count
 
 
-def run(client: paramiko.SSHClient, cmd: str) -> tuple[int, str, str]:
+def run(
+    client: paramiko.SSHClient, cmd: str, sudo_password: str | None = None
+) -> tuple[int, str, str]:
+    """Run a command, feeding `sudo -S` its password over stdin when asked.
+
+    Over stdin rather than in the command string: an argument would be visible
+    in `ps` on a shared machine for as long as the command runs.
+    """
     stdin, stdout, stderr = client.exec_command(cmd)
+    if sudo_password is not None:
+        stdin.write(sudo_password + "\n")
+        stdin.flush()
     out = stdout.read().decode(errors="replace")
     err = stderr.read().decode(errors="replace")
     code = stdout.channel.recv_exit_status()
     return code, out, err
 
 
-#: Runs `tools/run_server.py`, not a bare `uvicorn ...` CLI invocation.
-#: `logging_setup.configure()` is only ever called from inside that script's
-#: `main()` — calling `uvicorn` directly skips it, which leaves the root
-#: logger at Python's default WARNING level. Every `logger.info(...)` in the
-#: app (every "Queued message from", every "Intent prepared") then vanishes
-#: silently — nothing crashes, health checks still pass, so this went
-#: unnoticed for a while. `>>`, not `>`, so a redeploy does not truncate the
-#: log history the /ops page depends on.
+#: Restarts through **systemd**, not `nohup ... &`.
+#:
+#: The service (`wa-voxo.service`, installed 2026-08-17) is what survives a
+#: machine reboot — a reboot with the old `nohup` startup left the server down
+#: for ~55 minutes with nobody aware. Once systemd owns port 8003, the old
+#: `nohup` path silently stopped deploying anything: it killed whatever was in
+#: `.run.pid` (nothing — systemd's PID is not there), started a second process
+#: that died instantly on "address already in use", and then health-checked the
+#: *old* process, which answered 200. A deploy that reports success while
+#: running the previous code is the worst possible failure here, so this must
+#: stay `systemctl restart`.
+#:
+#: The unit runs `tools/run_server.py`, not a bare `uvicorn ...` CLI
+#: invocation: `logging_setup.configure()` is only ever called from inside that
+#: script's `main()`, and calling `uvicorn` directly leaves the root logger at
+#: WARNING, silently losing every `logger.info(...)` the /ops page shows.
 REMOTE_RESTART_CMD = f"""
 set -e
 cd {REMOTE_DIR}
@@ -116,22 +134,13 @@ if [ ! -d .venv ]; then
   python3 -m venv .venv
 fi
 .venv/bin/pip install --upgrade pip -q
-.venv/bin/pip install -e ".[stt,server,agent]" -q
+.venv/bin/pip install -e ".[stt,server,agent,redis]" -q
 
-if [ -f .run.pid ]; then
-  OLD_PID=$(cat .run.pid)
-  if kill -0 "$OLD_PID" 2>/dev/null; then
-    kill "$OLD_PID"
-    sleep 1
-  fi
-  rm -f .run.pid
-fi
-
-nohup .venv/bin/python tools/run_server.py --port {PORT} \\
-  >> uvicorn.log 2>&1 &
-echo $! > .run.pid
-sleep 2
-echo "PID: $(cat .run.pid)"
+# One sudo invocation, reading the password from stdin once — see `run`.
+# The speech engine takes ~5s to warm up, so the health check waits.
+sudo -S -p '' bash -c 'systemctl restart wa-voxo.service; sleep 15; \
+  echo "PID: $(systemctl show -p MainPID --value wa-voxo.service)"; \
+  systemctl is-active wa-voxo.service wa-voxo-tunnel.service'
 curl -s localhost:{PORT}/health || echo "health check failed -- check uvicorn.log"
 """
 
@@ -145,7 +154,7 @@ def main() -> None:
     sftp.close()
     print(f"Uploaded {n} files. Installing deps and restarting service...")
 
-    code, out, err = run(client, REMOTE_RESTART_CMD)
+    code, out, err = run(client, REMOTE_RESTART_CMD, sudo_password=load_env()["RACK_PASSWORD"])
     print(out)
     if err:
         print("STDERR:", err, file=sys.stderr)

@@ -1,0 +1,9 @@
+=== cert check ===
+Wrote public cert to openclaw-poweredge-r730.tailb276af.ts.net.crt
+Wrote private key to openclaw-poweredge-r730.tailb276af.ts.net.key
+
+=== curl from the box itself, over the funnel domain ===
+local test: 000
+
+=== dig from the box ===
+100.127.200.32

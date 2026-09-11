@@ -1,0 +1,6 @@
+=== revert the earlier wrong-guess edit to recon.conf ===
+reverted
+=== write the new, separate site file ===
+
+STDERR:
+bash: line 57: warning: here-document at line 8 delimited by end-of-file (wanted `"NGINXEOF"')

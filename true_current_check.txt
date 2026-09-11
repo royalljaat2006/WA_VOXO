@@ -1,0 +1,19 @@
+=== server time now ===
+Mon Aug 24 04:33:22 PM IST 2026
+
+=== total lines ===
+19446 uvicorn.log
+
+=== last 5 audit entries (has real ISO timestamps, unambiguous) ===
+{"amount_paise": 1000, "event": "intent_cancelled", "initiator_id": "8287151832", "intent_id": "4110f0b4d9d1", "payee": "9958358675", "payee_is_new": true, "payee_source": "dictated", "payee_vpa": "9958358675@ptaxis", "payer": "918287151832", "reason": "user_cancelled", "status": "awaiting_pin", "ts": "2026-08-21T06:08:47.289Z"}
+{"amount_paise": 1000, "event": "intent_prepared", "gateway": "EkoPaymentGateway", "initiator_id": "8287151832", "intent_id": "934ab273bda9", "payee": "9958358675", "payee_is_new": true, "payee_source": "dictated", "payee_vpa": "9958358675@upi", "payer": "918287151832", "status": "awaiting_pin", "ts": "2026-08-21T06:09:55.949Z"}
+{"amount_paise": 1000, "event": "transfer_failed", "gateway": "EkoPaymentGateway", "initiator_id": "8287151832", "intent_id": "934ab273bda9", "payee": "9958358675", "payee_is_new": true, "payee_source": "dictated", "payee_vpa": "9958358675@upi", "payer": "918287151832", "reason": "pending_at_gateway", "status": "failed", "ts": "2026-08-21T06:10:31.138Z"}
+{"amount_paise": 1000, "attempts": 2, "event": "settlement_resolved", "payer": "918287151832", "reference": "3573931940", "settled": false, "ts": "2026-08-21T06:13:12.442Z"}
+{"amount_paise": 5000, "attempts": 336, "event": "settlement_resolved", "payer": "919899246466", "reference": "3573928638", "ts": "2026-08-21T10:45:48.277Z"}
+
+=== last 3 REAL eko inquiry calls made by the running app itself ===
+16:13:47 INFO     whatsapp_voice.agent.eko_gateway — eko inquiry ref=…8638 http=401 body=Unauthorized
+16:14:48 INFO     whatsapp_voice.agent.eko_gateway — eko inquiry ref=…8638 http=401 body=Unauthorized
+16:15:48 INFO     whatsapp_voice.agent.eko_gateway — eko inquiry ref=…8638 http=401 body=Unauthorized
+
+=== any currently pending settlement being actively polled? ===

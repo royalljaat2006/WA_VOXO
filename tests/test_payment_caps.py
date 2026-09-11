@@ -52,26 +52,27 @@ class TestDailyCap:
         """An intent nobody confirmed spent nothing, so it must not eat into the
         day's allowance."""
         tool = tool_with(gateway)
-        tool.run(payee=RAMESH_VPA, amount="2000")
+        tool.run(payee=RAMESH_VPA, amount="2000", recipient_name="Ramesh Kumar")
         assert gateway.spent_today_paise(PAYER) == 0
 
     def test_transfer_over_the_remaining_allowance_is_refused(self, gateway):
         tool = tool_with(gateway, daily_cap_paise=500_000)
         send(gateway, 400_000)
         with pytest.raises(ToolError, match="limit"):
-            tool.run(payee=RAMESH_VPA, amount="2000")
+            tool.run(payee=RAMESH_VPA, amount="2000", recipient_name="Ramesh Kumar")
 
     def test_transfer_within_the_remaining_allowance_is_allowed(self, gateway):
         tool = tool_with(gateway, daily_cap_paise=500_000)
         send(gateway, 400_000)
-        assert "status=prepared" in tool.run(payee=RAMESH_VPA, amount="500")
+        result = tool.run(payee=RAMESH_VPA, amount="500", recipient_name="Ramesh Kumar")
+        assert "status=prepared" in result
 
     def test_the_message_says_what_is_left(self, gateway):
         """The user has to be able to act on the refusal, not just receive it."""
         tool = tool_with(gateway, daily_cap_paise=500_000)
         send(gateway, 400_000)
         with pytest.raises(ToolError) as caught:
-            tool.run(payee=RAMESH_VPA, amount="2000")
+            tool.run(payee=RAMESH_VPA, amount="2000", recipient_name="Ramesh Kumar")
         assert "1,000.00" in str(caught.value)   # ₹1,000 left of ₹5,000
 
     def test_many_small_transfers_hit_the_cap(self, gateway):
@@ -82,7 +83,7 @@ class TestDailyCap:
         send(gateway, 50_000)
         send(gateway, 50_000)
         with pytest.raises(ToolError):
-            tool.run(payee=RAMESH_VPA, amount="100")
+            tool.run(payee=RAMESH_VPA, amount="100", recipient_name="Ramesh Kumar")
 
     def test_the_cap_is_per_payer(self, gateway):
         send(gateway, 400_000)
@@ -92,7 +93,7 @@ class TestDailyCap:
         tool = tool_with(gateway, daily_cap_paise=200_000)
         send(gateway, 200_000)
         with pytest.raises(ToolError, match="0.00 is left"):
-            tool.run(payee=RAMESH_VPA, amount="100")
+            tool.run(payee=RAMESH_VPA, amount="100", recipient_name="Ramesh Kumar")
 
 
 class TestCapsCompose:
@@ -102,12 +103,12 @@ class TestCapsCompose:
         it can never satisfy."""
         tool = tool_with(gateway)
         with pytest.raises(ToolError, match="per-transaction"):
-            tool.run(payee=RAMESH_VPA, amount="50000")
+            tool.run(payee=RAMESH_VPA, amount="50000", recipient_name="Ramesh Kumar")
 
     def test_a_refused_transfer_leaves_no_pending_intent(self, gateway):
         tool = tool_with(gateway, daily_cap_paise=100)
         with pytest.raises(ToolError):
-            tool.run(payee=RAMESH_VPA, amount="2000")
+            tool.run(payee=RAMESH_VPA, amount="2000", recipient_name="Ramesh Kumar")
         assert len(tool._pending) == 0
 
     def test_defaults_are_the_documented_ones(self):

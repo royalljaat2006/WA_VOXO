@@ -144,7 +144,7 @@ def _build_inner(
             )
 
         agent, gateway, pending, contacts, audit = build_payment_stack(
-            settings.agent, settings.payments, settings.eko, store
+            settings.agent, settings.payments, settings.eko, store, settings.pintwin
         )
 
         # Only a real gateway can be asked about a transfer, and only when eko

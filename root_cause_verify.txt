@@ -1,0 +1,30 @@
+=== test 1: repeat exact same blank-everything call ===
+HTTP/1.1 200 OK
+Date: Mon, 24 Aug 2026 11:01:15 GMT
+Content-Type: application/json
+
+=== test 2: real developer_key, blank secret_key/timestamp (my earlier test variant) ===
+HTTP/1.1 200 OK
+Date: Mon, 24 Aug 2026 11:01:15 GMT
+Content-Type: application/json
+Transfer-Encoding: chunked
+Connection: keep-alive
+Pragma: No-cache
+Cache-Control: no-cache
+Expires: Thu, 01 Jan 1970 05:30:00 IST
+server: Eko
+Access-Control-Allow-Origin: *
+Access-Control-Allow-Credentials: 
+
+=== test 3: real developer_key, blank secret_key, REAL timestamp ===
+HTTP/1.1 200 OK
+Date: Mon, 24 Aug 2026 11:01:15 GMT
+Content-Type: application/json
+Transfer-Encoding: chunked
+Connection: keep-alive
+Pragma: No-cache
+Cache-Control: no-cache
+Expires: Thu, 01 Jan 1970 05:30:00 IST
+server: Eko
+Access-Control-Allow-Origin: *
+Access-Control-Allow-Credentials: 

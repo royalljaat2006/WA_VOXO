@@ -1,0 +1,20 @@
+INFO:     14.195.186.114:0 - "GET /ops/activity HTTP/1.1" 200 OK
+INFO:     14.195.186.114:0 - "GET /ops/activity HTTP/1.1" 200 OK
+INFO:     14.195.186.114:0 - "GET /ops/activity HTTP/1.1" 200 OK
+INFO:     14.195.186.114:0 - "GET /ops/activity HTTP/1.1" 200 OK
+INFO:     14.195.186.114:0 - "GET /ops/activity HTTP/1.1" 200 OK
+INFO:     14.195.186.114:0 - "GET /ops/activity HTTP/1.1" 200 OK
+16:15:46 INFO     whatsapp_voice.whatsapp.app — Webhook verification succeeded
+INFO:     2a03:2880:10ff:5e:::0 - "GET /webhook?hub.mode=subscribe&hub.challenge=987074843&hub.verify_token=eko-wa-z3qQPgqv2NVRuxiEEWGqypd5dkEz4p7S&hub_mode=subscribe&hub_challenge=987074843&hub_verify_token=eko-wa-z3qQPgqv2NVRuxiEEWGqypd5dkEz4p7S HTTP/1.1" 200 OK
+INFO:     14.195.186.114:0 - "GET /ops/activity HTTP/1.1" 200 OK
+INFO:     14.195.186.114:0 - "GET /ops/activity HTTP/1.1" 200 OK
+INFO:     14.195.186.114:0 - "GET /ops/activity HTTP/1.1" 200 OK
+INFO:     14.195.186.114:0 - "GET /ops/activity HTTP/1.1" 200 OK
+INFO:     14.195.186.114:0 - "GET /ops/activity HTTP/1.1" 200 OK
+INFO:     14.195.186.114:0 - "GET /ops/activity HTTP/1.1" 200 OK
+16:16:21 INFO     whatsapp_voice.whatsapp.app — Queued TextMessage from …1832
+INFO:     2a03:2880:2ff:45:::0 - "POST /webhook HTTP/1.1" 200 OK
+16:16:24 INFO     whatsapp_voice.whatsapp.handlers — Answered …1832 — tools=none tokens=2464/55
+INFO:     2a03:2880:21ff:41:::0 - "POST /webhook HTTP/1.1" 200 OK
+INFO:     2a03:2880:10ff:4f:::0 - "POST /webhook HTTP/1.1" 200 OK
+INFO:     167.71.253.32:0 - "GET / HTTP/1.1" 404 Not Found

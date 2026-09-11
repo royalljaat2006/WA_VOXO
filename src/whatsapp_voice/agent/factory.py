@@ -11,7 +11,7 @@ import logging
 from pathlib import Path
 
 from ..audit import AuditTrail
-from ..config import AgentSettings, EkoSettings, PaymentSettings
+from ..config import AgentSettings, EkoSettings, PaymentSettings, PinTwinSettings
 from ..store import KeyValueStore
 from .base import Agent
 from .campaign_tools import campaign_tools
@@ -20,6 +20,7 @@ from .conversation import ConversationStore
 from .datasource import CampaignDataSource, StubCampaignSource
 from .payment_tools import PAYMENT_PROMPT, payment_tools
 from .payments import ContactBook, PaymentGateway, PendingIntents, StubPaymentGateway
+from .pintwin_push import KeyPusher, build_key_pusher
 from .tools import Tool, ToolRegistry
 
 logger = logging.getLogger(__name__)
@@ -101,6 +102,7 @@ def build_agent(
     contacts: ContactBook | None = None,
     audit: AuditTrail | None = None,
     eko: EkoSettings | None = None,
+    pusher: KeyPusher | None = None,
 ) -> Agent:
     """The agent named by `AGENT_PROVIDER`, wired to tools and a data source.
 
@@ -123,7 +125,7 @@ def build_agent(
                 "Payments are enabled but no gateway/pending store was passed. "
                 "Use build_payment_stack() rather than calling build_agent() directly."
             )
-        tool_list += payment_tools(gateway, pending, payments, audit)
+        tool_list += payment_tools(gateway, pending, payments, audit, pusher)
         prompt += PAYMENT_PROMPT
 
     tools = ToolRegistry(tool_list)
@@ -173,6 +175,7 @@ def build_payment_stack(
     payment_settings: PaymentSettings,
     eko: EkoSettings | None = None,
     store: KeyValueStore | None = None,
+    pintwin: PinTwinSettings | None = None,
 ) -> tuple[Agent, PaymentGateway, PendingIntents, ContactBook, AuditTrail]:
     """Agent, gateway, pending-intent store and contact book, sharing instances.
 
@@ -191,7 +194,11 @@ def build_payment_stack(
     audit = build_audit_trail(payment_settings)
     pending = PendingIntents(store)
     contacts = ContactBook()
+    # `NullKeyPusher` unless PINTWIN_PUSH_* is configured, so a deployment that
+    # has not wired the app up behaves exactly as it does today.
+    pusher = build_key_pusher(pintwin)
     agent = build_agent(
-        agent_settings, payment_settings, gateway, pending, contacts, audit, eko
+        agent_settings, payment_settings, gateway, pending, contacts, audit, eko,
+        pusher,
     )
     return agent, gateway, pending, contacts, audit

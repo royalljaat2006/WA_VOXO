@@ -1,0 +1,123 @@
+=== recon.conf (looks like the default/catch-all, most recently touched) ===
+# /etc/nginx/conf.d/recon.conf — Eko Recon: /recon static + /api proxy, on :80 (LAN) and :443 (public HTTPS, self-signed)
+upstream recon_backend { server 127.0.0.1:8000; keepalive 16; }
+
+server {
+    listen 80;
+    server_name _;
+    absolute_redirect off;
+    client_max_body_size 100m;
+
+    location /api/ {
+        proxy_pass http://recon_backend;
+        proxy_http_version 1.1;
+        proxy_set_header Connection         "";
+        proxy_set_header Host               $host;
+        proxy_set_header X-Real-IP          $remote_addr;
+        proxy_set_header X-Forwarded-For    $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto  $scheme;
+        proxy_read_timeout    300s;
+        proxy_send_timeout    300s;
+        proxy_request_buffering off;
+    }
+
+    location = /recon { return 301 /recon/; }
+
+    location ^~ /recon/assets/ {
+        root /var/www;
+        try_files $uri =404;
+        access_log off;
+        expires 1y;
+        add_header Cache-Control "public, immutable";
+    }
+
+    location = /recon/index.html {
+        root /var/www;
+        add_header Cache-Control "no-cache";
+    }
+
+    location /recon/ {
+        root /var/www;
+        try_files $uri /recon/index.html;
+    }
+}
+
+server {
+    listen 443 ssl;
+    server_name _;
+    absolute_redirect off;
+
+    ssl_certificate     /etc/nginx/ssl/recon.crt;
+    ssl_certificate_key /etc/nginx/ssl/recon.key;
+    include snippets/claw-dashboard.conf;
+    include snippets/inactive-alert.conf;
+    include snippets/eko-coaching.conf;
+    include snippets/eko-kiosk.conf;
+    ssl_protocols       TLSv1.2 TLSv1.3;
+
+    client_max_body_size 100m;
+
+    location /api/ {
+        proxy_pass http://recon_backend;
+        proxy_http_version 1.1;
+        proxy_set_header Connection         "";
+        proxy_set_header Host               $host;
+        proxy_set_header X-Real-IP          $remote_addr;
+        proxy_set_header X-Forwarded-For    $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto  $scheme;
+        proxy_read_timeout    300s;
+        proxy_send_timeout    300s;
+        proxy_request_buffering off;
+    }
+
+    location = /recon { return 301 /recon/; }
+
+    location ^~ /recon/assets/ {
+        root /var/www;
+        try_files $uri =404;
+        access_log off;
+        expires 1y;
+        add_header Cache-Control "public, immutable";
+    }
+
+    location = /recon/index.html {
+        root /var/www;
+        add_header Cache-Control "no-cache";
+    }
+
+    location /recon/ {
+        root /var/www;
+        try_files $uri /recon/index.html;
+    }
+
+    # ---- Added by Claude (WhatsApp Server Issue Fetcher dashboard), 2026-08-05 ----
+    # Purely additive: proxies /wa-issue-fetcher/ to our own Node app on 127.0.0.1:4545.
+    # Mirrors the /wa-issue-fetcher/ block already added to csp-dashboard (port 80).
+    # Does not touch or affect the /api/ or /recon/ locations above or anything
+    # else in this shared config.
+    location /wa-issue-fetcher/ {
+        client_max_body_size 20M;
+        proxy_read_timeout 600s;
+        proxy_send_timeout 600s;
+
+=== default site ===
+server {
+	listen 80 default_server;
+	listen [::]:80 default_server;
+	root /var/www/html;
+	index index.html index.htm index.nginx-debian.html;
+	server_name _;
+	location / {
+    location /csp-platform/ {
+        client_max_body_size 50M;
+        proxy_read_timeout 600s;
+        proxy_send_timeout 600s;
+        proxy_pass http://127.0.0.1:5050/;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+    }
+		try_files $uri $uri/ =404;
+	}
+}

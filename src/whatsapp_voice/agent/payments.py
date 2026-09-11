@@ -96,11 +96,22 @@ class Payee:
 
     `resolved_name` is what makes a wrong payee catchable by a human: nobody
     notices a transposed digit, everybody notices the wrong name.
+
+    `stated_name` is the name the **payer said**, and is deliberately a
+    separate field from `resolved_name`: one was verified by a directory
+    lookup, the other is whatever the sender typed or dictated. Collapsing
+    them would make an unverified name silently satisfy
+    `needs_digit_readback`, dropping the read-back that dictation exists to
+    require. eko needs a non-empty `recipient_name` on every transfer and
+    returns no name of its own, so without this field every real transfer
+    sent an empty one and was rejected with "Invalid Recipient Name".
     """
 
     phone: str
     vpa: str | None = None
     resolved_name: str | None = None
+    #: What the payer called this person. Unverified — see the class docstring.
+    stated_name: str | None = None
     masked_account: str | None = None
     #: True when this payer has never sent to this payee before. Drives the
     #: first-time cap — the main protection when payees are arbitrary.
@@ -439,6 +450,10 @@ def _payee_to_jsonable(payee: Payee) -> dict[str, Any]:
         "phone": payee.phone,
         "vpa": payee.vpa,
         "resolved_name": payee.resolved_name,
+        # Must round-trip: it is what eko's `recipient_name` is built from, and
+        # an intent is re-read from the store between prepare and execute.
+        # Dropping it here would send an empty name and be rejected.
+        "stated_name": payee.stated_name,
         "masked_account": payee.masked_account,
         "is_new": payee.is_new,
         "source": payee.source.value,
@@ -450,6 +465,7 @@ def _payee_from_jsonable(data: dict[str, Any]) -> Payee:
         phone=data["phone"],
         vpa=data.get("vpa"),
         resolved_name=data.get("resolved_name"),
+        stated_name=data.get("stated_name"),
         masked_account=data.get("masked_account"),
         is_new=data.get("is_new", True),
         source=PayeeSource(data.get("source", PayeeSource.DICTATED.value)),

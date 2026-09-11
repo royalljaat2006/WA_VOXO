@@ -106,7 +106,7 @@ class TestPaymentLifecycle:
     def prepare(self, gateway, pending, trail, amount="2000"):
         current_payer.set(PAYER)
         tool = PrepareTransferTool(gateway, pending, LIMITS, trail)
-        tool.run(payee=RAMESH_VPA, amount=amount)
+        tool.run(payee=RAMESH_VPA, amount=amount, recipient_name="Ramesh Kumar")
         return pending.get(PAYER)
 
     def test_preparing_is_recorded_before_anything_is_authorised(
@@ -191,7 +191,8 @@ class TestPaymentLifecycle:
         current_payer.set(PAYER)
         tool = PrepareTransferTool(gateway, pending, LIMITS, trail)
         with pytest.raises(ToolError):
-            tool.run(payee=RAMESH_VPA, amount="50000")     # over the per-txn cap
+            # over the per-txn cap
+            tool.run(payee=RAMESH_VPA, amount="50000", recipient_name="Ramesh Kumar")
 
         assert [entry["event"] for entry in lines(trail)] == []
 
